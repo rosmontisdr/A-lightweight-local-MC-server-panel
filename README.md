@@ -15,11 +15,16 @@
 
 
 This is a super lightweight local Minecraft server management panel.
+
 Zero dependencies, just using Node.js standard library.
+
 I noticed there isn’t a really good and lightweight MC local server panel available, so I made one.
+
 Features: monitor and manage your local server status, backup and restore, change server settings with one click, and you can change the panel’s open port to make LAN access easier.
+
 How to start?
 Download the source code and double-click start.bat,
 or
 download the installer from the release and install it.
+
 made under the help of deepseek
