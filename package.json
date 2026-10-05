@@ -1,0 +1,13 @@
+{
+  "name": "mcpanel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minecraft 服务器本地管理面板 - 零依赖",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

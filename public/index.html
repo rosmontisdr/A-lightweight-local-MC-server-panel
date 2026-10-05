@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover 接管刘海屏安全区，底部按钮用 env(safe-area-inset-bottom) 让位；不禁用缩放，保证小字可放大。 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Minecraft 服务器管理面板</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231baf7a'/><rect x='7' y='9' width='18' height='5' rx='1.5' fill='%23fff' opacity='.9'/><rect x='7' y='17' width='11' height='6' rx='1.5' fill='%23fff' opacity='.55'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="7" fill="var(--accent)"/><rect x="7" y="9" width="18" height="5" rx="1.5" fill="#fff" opacity=".92"/><rect x="7" y="17" width="11" height="6" rx="1.5" fill="#fff" opacity=".5"/></svg>
+      </div>
+      <div>
+        <div class="brand-title">RS面板</div>
+        <div class="brand-sub">MC服务器本地管理</div>
+        <div class="brand-by">made by 玄渊不是香厨（bilibili）</div>
+      </div>
+      <!-- 抽屉形态下关闭侧边栏，置于左上角。 -->
+      <button class="sidebar-close" data-action="toggle-sidebar" aria-label="关闭服务器列表">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+
+    <div class="sidebar-section-label">服务器</div>
+    <div class="server-list" id="serverList"></div>
+    <button class="btn btn-ghost add-server" data-action="add-server">
+      <span class="plus">+</span> 添加服务器
+    </button>
+
+    <div class="sidebar-foot" id="panelInfo"></div>
+  </aside>
+
+  <!-- 抽屉遮罩：点击关闭侧边栏，桌面端不显示。 -->
+  <div class="sidebar-scrim" data-action="toggle-sidebar" aria-hidden="true"></div>
+
+  <main class="main">
+    <header class="server-header" id="serverHeader"></header>
+    <nav class="tabs" id="tabs"></nav>
+    <section class="content" id="content"></section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div class="modal-root" id="modalRoot"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

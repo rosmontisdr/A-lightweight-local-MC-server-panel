@@ -1,6 +1,5 @@
-# A-lightweight-local-MC-server-panel
-An extremely lightweight but fully functional local MC server management panel, with excellent mobile UI adaptation
 这是一个极其轻量化的本地mc服务器管理面板
+
 
 本人发现市面上没有好用且轻量化的mc本地服务器面板，故制作了一个
 
