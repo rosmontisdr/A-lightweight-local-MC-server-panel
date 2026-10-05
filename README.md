@@ -1,11 +1,18 @@
 这是一个极其轻量化的本地mc服务器管理面板
-
-
+零依赖，仅使用 Node.js 标准库，支持主流模组加载器
 本人发现市面上没有好用且轻量化的mc本地服务器面板，故制作了一个
-
 功能：监测并管理本地服务器状态，备份与恢复，一键更改服务器设置，能更改面板开放的端口以方便内网穿透
-
 怎么开始？
 下载源码，双击start.bat
 或者
 下载release中的安装包安装
+有ds辅助
+This is a super lightweight local Minecraft server management panel.
+Zero dependencies, just using Node.js standard library.
+I noticed there isn’t a really good and lightweight MC local server panel available, so I made one.
+Features: monitor and manage your local server status, backup and restore, change server settings with one click, and you can change the panel’s open port to make LAN access easier.
+How to start?
+Download the source code and double-click start.bat,
+or
+download the installer from the release and install it.
+made under the help of deepseek
