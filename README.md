@@ -11,8 +11,6 @@
 或者
 下载release中的安装包安装
 
-有ds辅助
-
 暂时只支持中文
 
 This is a super lightweight local Minecraft server management panel.
@@ -27,7 +25,5 @@ How to start?
 Download the source code and double-click start.bat,
 or
 download the installer from the release and install it.
-
-made under the help of deepseek
 
 only support Chinese now
