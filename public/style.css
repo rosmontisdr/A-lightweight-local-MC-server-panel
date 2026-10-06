@@ -59,7 +59,7 @@
 }
 
 * { box-sizing: border-box; }
-/* 前端用 el.hidden 控制显隐。设置了 display 的类选择器会盖过浏览器默认的 [hidden]{display:none}，故显式兜底。 */
+/* 前端用 el.hidden 控制显隐，需兜底 [hidden]。 */
 [hidden] { display: none !important; }
 
 html, body {
@@ -87,7 +87,7 @@ a { color: var(--series-mem); }
   display: grid;
   grid-template-columns: 268px 1fr;
   height: 100vh;
-  /* 移动端地址栏伸缩时 100vh 不变，会把底部顶出视口；dvh 跟随实际视口，100vh 为旧浏览器兜底。 */
+  /* dvh 跟随实际视口，100vh 为旧浏览器兜底。 */
   height: 100dvh;
   overflow: hidden;
 }
@@ -110,7 +110,7 @@ a { color: var(--series-mem); }
 .brand-mark { display: flex; flex: none; }
 .brand-title { font-weight: 650; font-size: 17px; letter-spacing: .2px; }
 .brand-sub { font-size: 11.5px; color: var(--ink-3); }
-/* 署名行：字号小于 .brand-sub 的附属信息。不设 nowrap，宁可换行也不截断。 */
+/* 署名行：字号小于 .brand-sub 的附属信息。不设 nowrap。 */
 .brand-by { font-size: 10.5px; color: var(--ink-3); line-height: 1.5; }
 
 .sidebar-section-label {
@@ -403,7 +403,7 @@ a { color: var(--series-mem); }
   padding: 13px 15px 14px;
   min-width: 0;
 }
-/* 可点击 KPI 卡：整块可点，需手型光标与悬停反馈提示可点击。 */
+/* 可点击 KPI 卡：整块可点，需手型光标与悬停反馈。 */
 .stat-tile.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
 .stat-tile.clickable:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -454,7 +454,7 @@ a { color: var(--series-mem); }
 /* ───────────── 图表 ───────────── */
 
 .chart-wrap { position: relative; }
-/* touch-action: pan-y：纵向拖滚动页面，横向拖由图表接管（移动十字准星）。不加此条触摸时收不到 pointermove。 */
+/* touch-action: pan-y：纵向拖滚动页面，横向拖由图表接管（移动十字准星）。 */
 .chart-svg { display: block; width: 100%; touch-action: pan-y; }
 .chart-tip {
   position: absolute;
@@ -525,7 +525,7 @@ a { color: var(--series-mem); }
 .log-warn .log-text { color: var(--warning); }
 .log-join .log-text { color: var(--series-play); }
 
-/* 玩家对话：蓝色高亮，便于在一屏日志里一眼找到。控制台两种主题都是深色底，故色值固定。 */
+/* 玩家对话：蓝色高亮。控制台两种主题均为深色底，色值固定。 */
 .log-chat {
   background: rgba(124, 176, 255, .10);
   border-radius: 4px;
@@ -583,7 +583,7 @@ a { color: var(--series-mem); }
 .breadcrumb button:hover { background: var(--surface-2); }
 .breadcrumb .sep { color: var(--ink-3); }
 
-/* 兜底：表格在窄屏放不下时横向滚动，避免撑破页面。 */
+/* 兜底：表格在窄屏放不下时横向滚动。 */
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .file-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .file-table th {
@@ -613,13 +613,13 @@ a { color: var(--series-mem); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* min-width:0 触发省略号。flex 子项默认 min-width:auto（不窄于内容），overflow:hidden 不生效，长文件名会把表格撑出屏幕。 */
+  /* min-width:0 触发省略号。flex 子项默认 min-width:auto，overflow:hidden 不生效。 */
   min-width: 0;
 }
-/* 列宽写在此处而非 th 的行内 style：行内样式优先级高于媒体查询，会导致窄屏无法隐藏这两列。 */
+/* 列宽写在此处，不用 th 的行内 style。 */
 .file-table .col-size { width: 110px; }
 .file-table .col-time { width: 150px; }
-/* zip 行有四个操作（下载 / 解压 / 重命名 / 删除），宽度需足够，否则折行顶开行高。 */
+/* zip 行有四个操作，宽度需足够。 */
 .file-table .ops { width: 232px; text-align: right; white-space: nowrap; }
 .file-table .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-3); white-space: nowrap; }
 .file-ico { flex: none; width: 17px; height: 17px; opacity: .85; }
@@ -689,7 +689,7 @@ a { color: var(--series-mem); }
 }
 .empty h3 { margin: 0; font-size: 15px; color: var(--ink-2); font-weight: 600; }
 .empty p { margin: 0; font-size: 13px; max-width: 46ch; }
-/* 手机端空状态无按钮，仅靠这两行文本，主句提亮、副句压低。 */
+/* 手机端空状态无按钮，主句提亮、副句压低。 */
 .empty p.empty-lead { color: var(--ink-2); font-size: 13.5px; }
 .empty p.empty-sub { font-size: 12.5px; opacity: .85; }
 
@@ -831,8 +831,8 @@ a { color: var(--series-mem); }
 
 /* ═══════════════════ 移动端 / 窄屏适配 ═══════════════════
    三档：≤860px 侧边栏改为抽屉；≤560px 手机竖屏收紧留白、收列、弹窗近全屏；
-   (pointer: coarse) 触摸设备，与宽度无关，需大按钮。
-   侧边栏必须保留入口，不可 display:none（服务器列表、添加服务器、面板操作、高级设置均在其中）。
+   (pointer: coarse) 触摸设备需大按钮，与宽度无关。
+   侧边栏必须保留入口，不可 display:none。
    ═════════════════════════════════════════════════════════ */
 
 /* 抽屉专属元素，桌面端一律不出现 */
@@ -889,7 +889,7 @@ a { color: var(--series-mem); }
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
 
-  /* 窄屏隐藏侧边栏「添加服务器」：需手填绝对路径，手机上不实用。
+  /* 窄屏隐藏侧边栏「添加服务器」。
      这是窄屏下唯一的添加入口；「还没有服务器」引导页有独立按钮与自动扫描，不受影响。 */
   .add-server { display: none; }
 }
@@ -913,7 +913,7 @@ a { color: var(--series-mem); }
   .file-table td { padding: 11px 10px; }
   .server-item { padding-top: 11px; padding-bottom: 11px; }
 
-  /* 触摸设备无悬停反馈，去除以免残留高亮 */
+  /* 触摸设备无悬停反馈，去除高亮 */
   .file-table tr:hover td { background: none; }
   .stat-tile.clickable:hover { border-color: var(--border); background: var(--surface); }
 }
@@ -927,7 +927,7 @@ a { color: var(--series-mem); }
   .server-title { min-width: 0; flex: 1; }
   /* 窄屏隐藏目录路径，完整值见 title 属性 */
   .server-path { display: none; }
-  /* 操作按钮移至第二行平分宽度，避免挤在名称旁 */
+  /* 操作按钮移至第二行平分宽度 */
   .header-actions { margin-left: 0; width: 100%; gap: 6px; }
   .header-actions .btn { flex: 1 1 0; justify-content: center; min-width: 0; }
 
@@ -938,7 +938,7 @@ a { color: var(--series-mem); }
   .cards { grid-template-columns: 1fr; gap: 11px; }
   .card { padding: 13px; }
 
-  /* 窄屏弹窗近全屏：520px 固定宽度在手机上会被压窄 */
+  /* 窄屏弹窗近全屏 */
   .modal-root { padding: 10px; }
   .modal { max-height: 92dvh; }
   .modal-head { padding: 14px 15px 11px; font-size: 14.5px; }
@@ -958,7 +958,7 @@ a { color: var(--series-mem); }
     max-width: none;
   }
 
-  /* 文件页工具行改为纵向排列：横排时面包屑在手机上会被挤成单字列 */
+  /* 文件页工具行改为纵向排列 */
   .row-between { flex-direction: column; align-items: stretch; gap: 10px; }
   .breadcrumb { min-width: 0; margin-bottom: 0; }
   .drag-hint { display: none; }        /* 触摸屏无拖拽 */
@@ -966,21 +966,20 @@ a { color: var(--series-mem); }
   /* 窄屏隐藏文件列表的大小与修改时间列 */
   .file-table .col-size,
   .file-table .col-time { display: none; }
-  /* width:1% + nowrap 使操作列仅占按钮宽度，其余归文件名。不可用 table-layout:fixed：被 display:none 的列仍占列位并均分剩余宽度。 */
+  /* width:1% + nowrap 使操作列仅占按钮宽度，其余归文件名。不可用 table-layout:fixed。 */
   .file-table .ops { width: 1%; white-space: nowrap; }
   .file-table .ops .btn { padding: 5px 8px; }
 
-  /* 收窄名称列：降低 .nm 的 min-content，而非给容器加 max-width。
-     自动表格布局的列宽下限为内容 min-content，nowrap 的文件名会以全宽顶出屏幕。
-     max-width:0 是错误做法：会把 flex 容器压成 0，文件名等全部消失。
-     用 overflow-wrap:anywhere 让任意位置可断，列下限趋近 0 且仅在放不下时断词。 */
+  /* 收窄名称列：降低 .nm 的 min-content，不给容器加 max-width。
+     自动表格布局的列宽下限为内容 min-content。max-width:0 是错误做法。
+     用 overflow-wrap:anywhere 让任意位置可断。 */
   .file-table .fname .nm {
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
-  /* 窄屏隐藏扩展名标签：其 flex:none 且无 overflow-wrap，min-content 为自身全宽，
-     会抢光名称列宽度。文件名本身已含扩展名，标签为装饰。 */
+  /* 窄屏隐藏扩展名标签：其 flex:none 且无 overflow-wrap，min-content 为自身全宽。
+     文件名本身已含扩展名，标签为装饰。 */
   .file-table .ftype { display: none; }
 
   .editor { min-height: 46dvh; font-size: 12px; }
@@ -1073,7 +1072,7 @@ a { color: var(--series-mem); }
   gap: 5px;
   min-width: 0;
 }
-/* 文件名在前且不收缩，目录在后先被截断，深路径下不挤压文件名。 */
+/* 文件名在前且不收缩，目录在后先被截断。 */
 .up-now .up-file { flex: none; color: var(--ink-2); }
 .up-now .up-dir {
   overflow: hidden;
@@ -1161,7 +1160,7 @@ a { color: var(--series-mem); }
 /* ── 面板关闭后的占位页 ────────────────────────────────────── */
 .panel-closed {
   min-height: 100vh;
-  min-height: 100dvh;   /* 同 .app：按实际视口居中，避免被地址栏偏移 */
+  min-height: 100dvh;   /* 同 .app：按实际视口居中 */
   display: grid;
   place-content: center;
   justify-items: center;

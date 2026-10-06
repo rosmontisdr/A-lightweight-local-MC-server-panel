@@ -1,9 +1,8 @@
 'use strict';
 /**
  * start.bat 的入口：将面板脱离控制台独立运行。
- * Windows 关闭控制台会向挂载其上的所有进程发送 CTRL_CLOSE_EVENT，前台 node 随之退出；
- * 故以 detached + unref 启动独立进程，确认其监听后本进程退出。
- * 判断「端口上是否已运行本面板」必须在派生新进程前完成，否则会派生一个注定失败进程。输出写入 data/panel.log。
+ * 以 detached + unref 启动独立进程，确认其监听后本进程退出。
+ * 判断「端口上是否已运行本面板」必须在派生新进程前完成。输出写入 data/panel.log。
  */
 const fs = require('fs');
 const net = require('net');
@@ -61,7 +60,7 @@ async function main() {
   });
   child.unref();
 
-  // 等待监听，最多 8 秒。确认后再报启动成功；端口占用、代码报错须在此说明，窗口关闭后无法查看。
+  // 等待监听，最多 8 秒。确认后再报启动成功；端口占用、代码报错须在此说明。
   for (let i = 0; i < 40; i++) {
     await sleep(200);
     if (await isOurPanel(PORT)) {

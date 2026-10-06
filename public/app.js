@@ -10,8 +10,7 @@ const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
 
 /**
- * 服务端类型的显示名。必须覆盖 launcher.js 的 JAR_RULES / detect() 可能返回的全部
- * type，缺一项界面就会把内部标识直接漏出去（如「服务端：neoforge」）。
+ * 服务端类型的显示名。必须覆盖 launcher.js 的 JAR_RULES / detect() 可能返回的全部 type。
  */
 const TYPE_LABEL = {
   forge: 'Forge', neoforge: 'NeoForge', fabric: 'Fabric', quilt: 'Quilt',
@@ -59,8 +58,7 @@ function applyViewportClasses() {
   const root = document.documentElement;
   root.classList.toggle('is-narrow', NARROW.matches);
   root.classList.toggle('is-touch', TOUCH.matches);
-  // 变宽回桌面布局时必须收掉抽屉，否则 .nav-open 和 body 滚动锁定会残留，
-  // 之后再缩窄抽屉是开着的。
+  // 变宽回桌面布局时必须收掉抽屉。
   if (!NARROW.matches) toggleSidebar(false);
 }
 
@@ -71,7 +69,7 @@ function toggleSidebar(force) {
   const open = force == null ? !app.classList.contains('nav-open') : !!force;
   app.classList.toggle('nav-open', open);
   S.navOpen = open;
-  // 抽屉打开时锁定底层滚动，避免背景跟着滑动
+  // 抽屉打开时锁定底层滚动
   document.body.style.overflow = open ? 'hidden' : '';
   const btn = $('.menu-btn');
   if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -194,8 +192,7 @@ function openModal({ title, body, actions = [], wide = false, autofocus = true }
       const b = document.createElement('button');
       b.className = `btn ${a.variant ? 'btn-' + a.variant : ''}`;
       b.textContent = a.label;
-      // value 可以是函数：在主按钮点击、弹窗尚未拆除时从表单取值；
-      // close 之后 DOM 已移除，读不到了。
+      // value 可以是函数：在主按钮点击、弹窗尚未拆除时从表单取值。
       b.onclick = () => {
         if (typeof a.value === 'function') {
           let v;
@@ -211,8 +208,7 @@ function openModal({ title, body, actions = [], wide = false, autofocus = true }
     document.addEventListener('keydown', onKey);
     back.addEventListener('mousedown', (e) => { if (e.target === back) close(null); });
     $('#modalRoot').appendChild(back);
-    // 自动聚焦第一个输入框，省一次点击。autofocus=false 用于输入不是主题的弹窗：
-    // 窄屏上聚焦会立刻弹出软键盘盖住弹窗内容。
+    // 自动聚焦第一个输入框。autofocus=false 用于输入不是主题的弹窗。
     const first = autofocus ? $('input, textarea, select', bodyEl) : null;
     if (first) setTimeout(() => first.focus(), 30);
   });
@@ -220,7 +216,7 @@ function openModal({ title, body, actions = [], wide = false, autofocus = true }
 
 /** 危险操作确认。requireText 要求原样输入指定文本才放行；取值在弹窗挂载时进行。 */
 function confirmDanger({ title, message, detail, confirmLabel = '确认执行', requireText, tone = 'danger' }) {
-  // tone='info' 用于不可逆但不危险的动作（如重启面板）：红色样式会让人误以为要丢数据。
+  // tone='info' 用于不可逆但不危险的动作（如重启面板）。
   const boxCls = tone === 'danger' ? 'danger-box' : 'note-box';
   const btnVariant = tone === 'danger' ? 'danger' : 'primary';
   return openModal({
@@ -419,13 +415,13 @@ function createChart(container, opts) {
     tip.classList.remove('on');
   }
 
-  // 用 pointer 事件而非 mouse：触摸拖动也会发 pointermove，mousemove 时有时无。
+  // 用 pointer 事件而非 mouse。
   // .chart-svg 的 touch-action:pan-y 保证纵向拖仍翻页，只有横向拖落到这里。
   svg.addEventListener('pointermove', (e) => {
     if (pts.length < 2) return;
     showTip(nearest(e.clientX), e.clientX, e.clientY);
   });
-  // 鼠标移开即收，触摸在手指抬起时收，避免准星残留
+  // 鼠标移开即收，触摸在手指抬起时收
   svg.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') hideTip(); });
   svg.addEventListener('pointerup', (e) => { if (e.pointerType === 'touch') hideTip(); });
   svg.addEventListener('pointercancel', hideTip);
@@ -439,7 +435,7 @@ function createChart(container, opts) {
   };
 }
 
-/** 12 点迷你趋势线，用于状态卡 */
+/** 状态卡用的 12 点迷你趋势线 */
 function sparkline(values, color) {
   if (!values || values.length < 2) return '';
   const W = 100;
@@ -517,7 +513,7 @@ function recordHistory(st) {
   const last = h.t[h.t.length - 1];
   if (last && Date.now() - last < 900) return;
   h.t.push(Date.now());
-  // 记堆而非工作集：-Xms=-Xmx 时工作集几乎是一条直线，图上无信息
+  // 记堆而非工作集
   h.mem.push(st.running ? memStats(st).usedMb : 0);
   h.cpu.push(st.running ? (st.cpu || 0) : 0);
   h.players.push(st.running ? st.players.online : 0);
@@ -622,7 +618,7 @@ async function renameServer(id) {
   } catch (e) {
     return toast(e.message, 'err', 8000);
   }
-  // 就地改这一条并重画，不走 loadState()，避免多余的状态请求。
+  // 就地改这一条并重画，不走 loadState()。
   st.name = name;
   renderSidebar();
   renderHeader();
@@ -633,7 +629,7 @@ function renderHeader() {
   const el = $('#serverHeader');
   const st = currentStatus();
   if (!st) {
-    // 未选中服务器时抽屉开关更必要，因为「添加服务器」在抽屉里
+    // 未选中服务器时抽屉开关更必要。
     el.innerHTML = `${menuButton()}<div class="server-title"><h1>Minecraft 服务器管理面板</h1></div>`;
     return;
   }
@@ -664,8 +660,7 @@ function renderTabs() {
   el.innerHTML = TABS.map((t) => `
     <button class="tab ${t.id === S.tab ? 'active' : ''}" data-action="tab" data-tab="${t.id}">${t.label}</button>
   `).join('');
-  // 窄屏标签栏会横向滚动，当前页签可能在屏幕外；用 scrollIntoView({block:'nearest'})
-  // 只横向挪动标签栏，不连带滚动页面。
+  // 用 scrollIntoView({block:'nearest'}) 只横向挪动标签栏，不连带滚动页面。
   const active = el.querySelector('.tab.active');
   if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
@@ -724,8 +719,7 @@ function setAccent(id) {
 function renderTab() {
   const content = $('#content');
 
-  // 只销毁图表，不能清空 S.view。各标签页把数据存在 S.view 上，清空会导致渲染器
-  // 读不到数据而反复拉取，陷入无限循环，页面停在「正在读取…」。
+  // 只销毁图表，不清空 S.view。
   for (const v of Object.values(S.view)) {
     if (v && typeof v.destroy === 'function') v.destroy();
   }
@@ -743,9 +737,8 @@ function renderTab() {
 }
 
 function emptyState() {
-  // 手机端不提供添加入口：填绝对路径在手机上不可行。侧边栏的「添加服务器」由 CSS
-  // 隐藏，这里空列表时连「自动扫描」一起隐藏（扫描面板所在机器的目录在手机上无意义），
-  // 只留一句指路文案。
+  // 手机端不提供添加入口。侧边栏的「添加服务器」由 CSS 隐藏，这里空列表时
+  // 连「自动扫描」一起隐藏，只留一句指路文案。
   if (NARROW.matches) {
     return `<div class="empty">
       <svg width="46" height="46" viewBox="0 0 24 24" fill="var(--ink-3)" opacity=".5">${ICONS.mod}</svg>
@@ -769,7 +762,6 @@ function emptyState() {
 
 /**
  * 内存口径。优先 JVM 堆（jcmd），读不到才退回进程工作集。
- * 工作集受 -Xms 影响恒贴近 -Xmx，算占用率恒为 ~98%，会误导为即将 OOM。
  */
 function memStats(st) {
   const heap = st.heap;
@@ -778,13 +770,13 @@ function memStats(st) {
     return {
       usedMb: heap.used / 1048576,
       limitMb,
-      // 卡片显示「内存占用」而非「堆内存」：口径仍是 JVM 堆，但对用户更易理解。
+      // 卡片显示「内存占用」而非「堆内存」。
       label: '内存占用',
       hintSuffix: limitMb ? ` / ${fmtBytes(limitMb * 1048576)}` : '',
       byHeap: true,
     };
   }
-  // 退回工作集时不给出百分比：与 -Xmx 口径不同，比较会误导
+  // 退回工作集时不给出百分比。
   return {
     usedMb: st.mem / 1048576,
     limitMb: null,
@@ -904,7 +896,7 @@ function renderOverview(content, st) {
     emptyText: st.running ? '正在采集数据…' : '服务器未运行',
     formatAxis: (v) => (v >= 1024 ? (v / 1024).toFixed(1) + 'G' : Math.round(v) + 'M'),
     format: (v) => v.toFixed(0) + ' MB',
-    // 用堆上限（≈ -Xmx）作参考线；退回工作集时不画，口径不同会误导
+    // 用堆上限（≈ -Xmx）作参考线；退回工作集时不画。
     suggestMax: memLimitMb,
   });
   S.view.chartPlayers = createChart($('#chartPlayers'), {
@@ -1058,7 +1050,7 @@ function classifyLog(l) {
   if (l.stream === 'rcon') return 'rcon';
   if (l.stream === 'err') return 'err';
   const s = l.line;
-  // 对话先判定：玩家说的话里可能带 ERROR/WARN 字样，不该按错误着色。
+  // 对话先判定。
   if (isPlayerChat(s)) return 'chat';
   if (/\b(ERROR|FATAL|Exception|Caused by)\b/.test(s)) return 'err';
   if (/\bWARN(ING)?\b/.test(s)) return 'warn';
@@ -1069,7 +1061,7 @@ function classifyLog(l) {
 /**
  * 玩家对话。服务端日志形如 `… [Server thread/INFO]: <玩家名> 内容`，
  * 1.19 起未签名的消息前多一个 [Not Secure]；玩家名本身可能含方括号（如 daidaitou[The Priest]）。
- * 要求 `>` 后接空格与内容，避免把 `tps<--[HERE]` 这种指令报错回显当成对话。
+ * 要求 `>` 后接空格与内容。
  */
 function isPlayerChat(s) {
   return /\]: (?:\[Not Secure\] )?<[^<>]{1,32}> \S/.test(s);
@@ -1121,7 +1113,7 @@ function renderFiles(content, st) {
         ${crumbs.map((c, i) => `${i ? '<span class="sep">/</span>' : ''}<button data-action="nav-dir" data-path="${esc(c.path)}">${esc(c.label)}</button>`).join('')}
       </div>
       <div class="row">
-        <!-- 触摸设备上没有拖拽，这行提示在窄屏是纯噪音（CSS 里藏掉） -->
+        <!-- 触摸设备上没有拖拽，窄屏由 CSS 藏掉 -->
         <span class="muted drag-hint" style="font-size:12px">也可把文件或文件夹直接拖进本页</span>
         <button class="btn btn-sm" data-action="mkdir">新建文件夹</button>
         <button class="btn btn-sm" data-action="upload">上传文件</button>
@@ -1168,8 +1160,7 @@ function joinPath(dir, name) {
 }
 
 /* ── 压缩 / 解压 ──
-   前端只负责询问输出名与目标目录、并提示耗时；结果提示由后端 broadcast 的 notice 发出，
-   前端再 toast 会造成重复。 */
+   前端只负责询问输出名与目标目录、并提示耗时；结果提示由后端 broadcast 的 notice 发出。 */
 
 /** 长任务期间挂一条提示，结束即撤；结果由后端 notice 报告。 */
 async function withProgress(msg, fn) {
@@ -1258,7 +1249,7 @@ async function unzipEntry(zipPath, name) {
   }
 
   const parent = S.filePath || '';
-  // 包内已有根文件夹时默认解到当前目录，避免出现 world/world/
+  // 包内已有根文件夹时默认解到当前目录。
   const def = info.mode === 'here' ? '' : info.suggestDir;
 
   const whereOf = (into) => (parent ? parent + '/' : '') + (into ? into + '/' : '');
@@ -1307,7 +1298,7 @@ async function unzipEntry(zipPath, name) {
       {
         label: '解压',
         variant: 'primary',
-        // 返回对象而非字符串：'当前目录' 对应空串，空串无法区分取消
+        // 返回对象而非字符串。
         value: (elm) => ({ into: elm.querySelector('[data-into].on').dataset.into }),
       },
     ],
@@ -1613,7 +1604,7 @@ async function openPanelSettings() {
 
   const res = await openModal({
     title: '高级设置',
-    // 端口只是其中一项，主题与配色更常用；不聚焦，避免手机上开弹窗就弹键盘
+    // 端口只是其中一项，主题与配色更常用；不聚焦。
     autofocus: false,
     body: (bodyEl, close) => {
       bodyEl.innerHTML = `
@@ -1697,7 +1688,7 @@ async function openPanelSettings() {
         if (S.tab === 'overview') renderTab();
       });
 
-      // 跨站开关是安全边界，不即时生效，点击「保存」才提交。移动端不渲染此开关，故用可选链。
+      // 跨站开关是安全边界，不即时生效，点击「保存」才提交。移动端不渲染此开关。
       bodyEl.querySelector('[data-seg="xsite"]')?.addEventListener('click', (e) => {
         const b = e.target.closest('[data-xsite]');
         if (!b) return;
@@ -1706,8 +1697,7 @@ async function openPanelSettings() {
         }
       });
 
-      // 格式化有独立确认流程，不走 data-action 委托，直接挂按钮并先关闭本弹窗，
-      // 避免弹窗叠加。
+      // 格式化有独立确认流程，不走 data-action 委托，直接挂按钮并先关闭本弹窗。
       bodyEl.querySelector('[data-format]').onclick = () => {
         close(null);
         formatPanel();
@@ -1720,7 +1710,7 @@ async function openPanelSettings() {
         variant: 'primary',
         value: (bodyEl) => {
           const out = { port: bodyEl.querySelector('[data-port]').value.trim() };
-          // 移动端无此开关：不提交该项，否则会被当成「关闭」而静默改写服务端设置。
+          // 移动端无此开关，不提交该项。
           const xs = bodyEl.querySelector('[data-xsite="1"]');
           if (xs) out.allowCrossSite = xs.classList.contains('on');
           return out;
@@ -1731,11 +1721,11 @@ async function openPanelSettings() {
 
   if (!res || res.port === '') return;
 
-  // 两项设置各自判断变化，只提交变了的项，否则改跨站开关也会触发重启确认流程。
+  // 两项设置各自判断变化，只提交变了的项。
   const body = {};
   const port = Number(res.port);
   if (port !== p.port) body.port = port;
-  // 移动端不返回该项（开关未渲染），此时不参与比对，否则会被当成「改成关闭」提交。
+  // 移动端不返回该项（开关未渲染），不参与比对。
   if (res.allowCrossSite != null && !!res.allowCrossSite !== !!p.allowCrossSite) {
     body.allowCrossSite = !!res.allowCrossSite;
   }
@@ -1767,7 +1757,7 @@ async function openPanelSettings() {
   }).then(async (ok) => {
     if (!ok) return toast('端口已保存，下次启动面板时生效', 'warn', 6000);
     await api('/api/panel/restart', { method: 'POST', body: {} }).catch(() => {});
-    // 沿用当前主机名，避免在 127.0.0.1 与 localhost 之间跳换
+    // 沿用当前主机名。
     const target = `${location.protocol}//${location.hostname}:${out.port}/`;
     toast(`正在重启到 ${target} …`, 'info', 4000);
     gotoPanel(target);
@@ -1803,7 +1793,7 @@ function gotoPanel(target, timeout = 30000) {
       setTimeout(tick, 400);
     }
   };
-  // 旧进程退出、新进程绑定需要时间，立即探测会打到旧进程
+  // 旧进程退出、新进程绑定需要时间。
   setTimeout(tick, 900);
 }
 
@@ -1830,7 +1820,7 @@ async function shutdownPanel() {
       ? `正在运行的 ${running.length} 台服务器（${running.map((s) => esc(s.name)).join('、')}）<b>不会被关闭</b>，会继续运行。`
       : '当前没有正在运行的 Minecraft 服务器。',
     confirmLabel: '关闭面板',
-    // 与「重启面板」同属中性操作：不可逆但不丢数据，红色样式会夸大后果。
+    // 与「重启面板」同属中性操作：不可逆但不丢数据。
     tone: 'info',
   });
   if (!ok) return;
@@ -1847,7 +1837,6 @@ async function shutdownPanel() {
 /** 格式化面板：清空面板数据并重启。服务端见 POST /api/panel/format */
 /**
  * 开启「允许跨站请求」前的确认框，与格式化同级的摩擦（红框 + 打字确认）。
- * 它非删数据，但等于把这个无密码面板交给任意访问的网页，后果同等严重。
  * 关闭该开关不走这里。
  */
 function confirmAllowCrossSite() {
@@ -1872,7 +1861,7 @@ async function formatPanel() {
   const running = (S.servers || []).filter((s) => s.running);
   const ok = await confirmDanger({
     title: '格式化面板',
-    // 说明放在这里，点开按钮才显示，避免长期占据设置界面
+    // 说明放在这里，点开按钮才显示。
     message:
       '将清空服务器列表、面板设置（端口、明暗、主题色）、全部备份 zip 和面板日志，'
       + '回到刚解压出来的状态。此操作无法撤销。',
@@ -1895,14 +1884,14 @@ async function formatPanel() {
     return toast(e.message, 'err', 10000);
   }
 
-  // 端口设置在格式化后会被清空，不能 reload 当前 origin（可能无人监听），
+  // 端口设置在格式化后会被清空，不能 reload 当前 origin，
   // 须跳到重启后真正监听的地址。MCPANEL_PORT 优先级最高：存在时端口仍为当前值。
   const fromEnv = S.panel && S.panel.portFromEnv;
-  // 沿用当前主机名，避免在 127.0.0.1 与 localhost 之间跳换
+  // 沿用当前主机名。
   const port = fromEnv ? location.port : ((S.panel && S.panel.defaultPort) || 8080);
   const target = `${location.protocol}//${location.hostname}:${port}/`;
 
-  // 页面即将被替换，先关闭 SSE，避免重连的消息写入已移除的 DOM。
+  // 页面即将被替换，先关闭 SSE。
   if (S.sse) { S.sse.close(); S.sse = null; }
 
   document.body.innerHTML = `
@@ -1918,7 +1907,7 @@ async function openLaunchSettings() {
   const d = S.detail || {};
   const detected = d.launch || {};
   const saved = d.savedLaunch;
-  // 有自定义配置则展示自定义，否则展示自动探测结果
+  // 有自定义配置则展示自定义，没有则展示自动探测结果
   const cur = saved && saved.programArgs ? saved : detected;
 
   const result = await openModal({
@@ -1988,7 +1977,7 @@ async function openLaunchSettings() {
         const prog = tokenizeArgs(bodyEl.querySelector('[data-lpa]').value);
         const script = resolveMode(prog) === 'script';
 
-        // 脚本模式下 java 路径与 JVM 参数无效，置灰以免误解
+        // 脚本模式下 java 路径与 JVM 参数无效，置灰。
         for (const sel of ['[data-lp]', '[data-lj]']) {
           bodyEl.querySelector(sel).disabled = script;
         }
@@ -2009,7 +1998,7 @@ async function openLaunchSettings() {
       bodyEl.addEventListener('input', upd);
       bodyEl.addEventListener('change', upd);
       upd();
-      // 供「保存」按钮复用同一判断，避免重复实现
+      // 供「保存」按钮复用同一判断。
       bodyEl.__resolveMode = resolveMode;
     },
     actions: [
@@ -2507,7 +2496,7 @@ document.addEventListener('click', async (e) => {
   const a = el.dataset.action;
   const st = currentStatus();
 
-  // 窄屏下点抽屉里的任何按钮都收起抽屉，否则切换后的内容或弹窗被抽屉盖住。
+  // 窄屏下点抽屉里的任何按钮都收起抽屉。
   // 关闭按钮与遮罩本身走 toggle-sidebar，是收起动作，不在此列。
   if (NARROW.matches && a !== 'toggle-sidebar' && el.closest('.sidebar')) toggleSidebar(false);
 
@@ -2515,8 +2504,7 @@ document.addEventListener('click', async (e) => {
     switch (a) {
       case 'toggle-sidebar': return toggleSidebar();
       case 'select-server': return selectServer(el.dataset.id);
-      // 行尾图标按钮是 .server-item 的兄弟节点而非子节点，点它 closest() 命中按钮本身，
-      // 不会误触发 select-server，无需拦截事件。
+      // 行尾图标按钮是 .server-item 的兄弟节点而非子节点，无需拦截事件。
       case 'rename-server': return renameServer(el.dataset.id);
       case 'tab':
         S.tab = el.dataset.tab;
@@ -2784,7 +2772,7 @@ async function boot() {
   // 视口/指针检测须在首次渲染前就位：抽屉初始状态与触摸专属样式都依赖 <html> 的 class。
   applyViewportClasses();
   // 跨断点时样式与空状态文案都要切换（手机端只有一句「请在电脑上添加服务器」）。
-  // 故无服务器时需重画，其余情况布局由 CSS 处理。
+  // 无服务器时需重画，其余情况布局由 CSS 处理。
   const onBreakpoint = () => {
     applyViewportClasses();
     if (!S.servers.length) renderTab();
@@ -2815,7 +2803,7 @@ async function boot() {
 function walkEntry(entry, prefix = '') {
   const readAll = (reader) => new Promise((resolve) => {
     const out = [];
-    // readEntries 每次最多返回 100 条，须反复读到空数组为止，否则大目录会漏文件
+    // readEntries 每次最多返回 100 条，须反复读到空数组为止。
     const step = () => reader.readEntries((batch) => {
       if (!batch.length) return resolve(out);
       out.push(...batch);
@@ -2842,7 +2830,7 @@ function walkEntry(entry, prefix = '') {
 
 /**
  * 从一次 drop 取出待上传文件列表。webkitGetAsEntry 必须在 drop 事件处理中同步调用，
- * 事件回调返回后 DataTransferItemList 即失效，故先同步取出 entry 再异步展开。
+ * 先同步取出 entry 再异步展开。
  */
 function collectDrop(dt) {
   const items = [...(dt.items || [])].filter((i) => i.kind === 'file');
@@ -2928,7 +2916,7 @@ async function uploadFiles(list) {
   else if (cancelled) toast(`已上传 ${okCount} 个后被取消`, 'warn');
   else toast(`已上传 ${okCount} 个文件`, 'ok', 2500);
 
-  // 只刷新文件列表，不整体 renderTab，用户可能已切换标签页
+  // 只刷新文件列表，不整体 renderTab。
   if (S.tab === 'files') loadFiles(base);
 }
 
@@ -2941,7 +2929,7 @@ async function uploadFiles(list) {
     </div>`;
   document.body.appendChild(veil);
 
-  // dragleave 在子元素间移动时也会触发，用计数器判断是否真正离开窗口，避免闪烁
+  // dragleave 在子元素间移动时也会触发，用计数器判断是否真正离开窗口。
   let depth = 0;
   const onFilesTab = () => S.tab === 'files' && !!S.current;
   const hide = () => { depth = 0; veil.classList.remove('on'); };
@@ -2956,11 +2944,10 @@ async function uploadFiles(list) {
     veil.classList.add('on');
   });
 
-  // dragover / drop 一律拦下文件拖拽，不区分标签页：否则在非文件页误拖文件时浏览器
-  // 会直接打开它，整页被顶掉。不在文件页时拦下后只提示。
+  // dragover / drop 一律拦下文件拖拽，不区分标签页。不在文件页时拦下后只提示。
   window.addEventListener('dragover', (e) => {
     if (!dragsFiles(e)) return;
-    e.preventDefault();               // 须 preventDefault，否则 drop 不触发
+    e.preventDefault();               // 须 preventDefault。
     if (onFilesTab()) e.dataTransfer.dropEffect = 'copy';
   });
 

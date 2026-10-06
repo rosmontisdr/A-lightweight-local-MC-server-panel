@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Minecraft 服务器管理面板 —— HTTP 服务 + API 路由
+ * Minecraft 服务器管理面板：HTTP 服务 + API 路由
  * 只监听 127.0.0.1（端口默认 8080，可在「高级设置」改），局域网其他机器无法访问。
  * 零第三方依赖，只用 Node 标准库。
  */
@@ -23,8 +23,8 @@ const { HOST, DEFAULT_PORT, normalizePort, resolvePort, openBrowser, isOurPanel 
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// 面板由 launch.js 以脱离控制台的方式拉起，无控制台可写，需自落日志文件备用。
-// 「格式化面板」也要用 LOG_FILE，故保留引用而非直接 .init()。
+// 面板由 launch.js 以脱离控制台的方式拉起，需自落日志文件。
+// 「格式化面板」也要用 LOG_FILE。
 const panellog = require('./lib/panellog');
 panellog.init();
 
@@ -59,7 +59,7 @@ function sendJson(res, code, obj) {
 function sendError(res, e) {
   const msg = e && e.message ? e.message : String(e);
   const code = /不存在|未找到/.test(msg) ? 404 : /非法|越界|拒绝/.test(msg) ? 403 : 400;
-  // conflict 供前端分流：同名文件已存在时弹「覆盖？」而非直接报错
+  // conflict 供前端分流：同名文件已存在时前端弹「覆盖？」。
   sendJson(res, code, { error: msg, conflict: !!(e && e.conflict) });
 }
 
@@ -157,7 +157,7 @@ async function route(req, res, url) {
 
     const found = new Set();
     for (const root of roots) {
-      // 只扫一层，避免遍历整块盘
+      // 只扫一层。
       let entries = [];
       try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
       for (const e of entries) {
@@ -193,7 +193,7 @@ async function route(req, res, url) {
       const next = normalizePort(body.port);
       if (!next) throw new Error('端口必须是 1024 - 65535 之间的整数');
       const changed = next !== PORT;
-      // 换端口前须确认新端口空闲：否则重启后新进程绑不上，旧进程已退出，面板失联。
+      // 换端口前须确认新端口空闲。
       if (changed && !(await portAvailable(next))) {
         throw new Error(`端口 ${next} 已被其他程序占用，换一个吧`);
       }
@@ -203,7 +203,7 @@ async function route(req, res, url) {
     }
 
     if ('allowCrossSite' in body) {
-      // 立即生效：上述检查每次请求现读设置，无需重启面板
+      // 立即生效，无需重启面板。
       const allow = !!body.allowCrossSite;
       store.setSetting('allowCrossSite', allow);
       out.allowCrossSite = allow;
@@ -213,7 +213,7 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/panel/restart' && m === 'POST') {
-    // 先响应再重启，否则浏览器只看到连接中断错误
+    // 先响应再重启。
     sendJson(res, 200, { ok: true, port: PORT });
     setTimeout(() => { relaunch(); setTimeout(() => process.exit(0), 300); }, 200);
     return;
@@ -236,17 +236,17 @@ async function route(req, res, url) {
     }
     store.reset();
     try { fs.rmSync(backup.BACKUP_ROOT, { recursive: true, force: true }); } catch {}
-    // panel.log 被本进程以追加模式打开，Windows 下无法删除，截断为空文件即可
+    // panel.log 无法删除，截断为空文件。
     try { fs.writeFileSync(panellog.LOG_FILE, ''); } catch {}
     try { fs.rmSync(panellog.LOG_FILE + '.1', { force: true }); } catch {}
 
     sendJson(res, 200, { ok: true });
-    // 重启：设置已清空，新进程须按默认值启动；也避免内存中旧配置在后续 save() 时覆盖回去。
+    // 重启：设置已清空，新进程须按默认值启动。
     setTimeout(() => { relaunch(); setTimeout(() => process.exit(0), 300); }, 200);
     return;
   }
 
-  // 目录浏览器（添加服务器选路径用）
+  // 目录浏览器（添加服务器选路径）
   if (p === '/api/browse' && m === 'GET') {
     const target = q.get('path');
     const os = require('os');
@@ -334,7 +334,6 @@ async function route(req, res, url) {
   if (sub === '/restart' && m === 'POST') {
     background(server, '重启', async () => {
       // stop() 会一直等到进程真正退出，这里只需再给端口一点释放时间。
-      // 原来的固定 2 秒等待不够：JVM 存档没完就 start()，会被判成「仍在运行」而中止重启。
       if (server.running) await server.stop(120000);
       await new Promise((r) => setTimeout(r, 1000));
       return server.start();
@@ -353,7 +352,7 @@ async function route(req, res, url) {
     return sendJson(res, 200, r);
   }
 
-  // 接口供控制台快捷指令与排查用。读不到时附 reason，区分「无指令通道」与「服务端不认该指令」。
+  // 读不到时附 reason，区分「无指令通道」与「服务端不认该指令」。
   if (sub === '/tps' && m === 'POST') {
     const tps = await server.probeTps(6000);
     return sendJson(res, 200, {
@@ -406,7 +405,7 @@ async function route(req, res, url) {
       } catch {}
     }
     // 按文件名排序：崩溃报告整体在前，组内倒序（最新在前）。
-    // numeric 倒序使日志读作 latest.log → …-4 → …-3 → …-2 → …-1，避免 -10 排到 -9 之前。
+    // numeric 倒序使日志读作 latest.log → …-4 → …-3 → …-2 → …-1。
     const rank = (d) => (d === 'crash-reports' ? 0 : 1);
     out.sort((a, b) => rank(a.dir) - rank(b.dir)
       || b.name.localeCompare(a.name, 'en', { numeric: true }));
@@ -488,7 +487,7 @@ async function route(req, res, url) {
   }
 
   // ---- 压缩 / 解压 ----
-  // 只读，用于填充「解压」弹窗（条目数、解压目标、是否有越界条目）
+  // 只读。返回条目数、解压目标、是否有越界条目。
   if (sub === '/files/archive/preview' && m === 'POST') {
     const body = await readJson(req);
     return sendJson(res, 200, await archive.preview(server.dir, body.path, body.into ?? null));
@@ -513,7 +512,7 @@ async function route(req, res, url) {
   // ---- server.properties ----
   if (sub === '/props' && m === 'GET') {
     const parsed = server.getProps(true);
-    // 掩码只加在这一层：mcserver 的 getProps() 必须保留真实值，rconConfig 靠它连 RCON。
+    // 掩码只加在这一层。mcserver 的 getProps() 必须保留真实值。
     const items = Object.entries(parsed.map).map(([key, v]) => ({
       key,
       value: propsLib.isSecretKey(key) ? propsLib.SECRET_MASK : v.value,
@@ -521,7 +520,7 @@ async function route(req, res, url) {
       description: propsLib.describe(key),
       secret: propsLib.isSecretKey(key),
     }));
-    // 不再返回整份原文：它含 rcon 密码明文，而前端只用 items 渲染表单，raw 无人使用。
+    // 不再返回整份原文。
     return sendJson(res, 200, { items });
   }
 
@@ -529,8 +528,7 @@ async function route(req, res, url) {
     const body = await readJson(req);
     const changes = body.changes || {};
     if (!Object.keys(changes).length) throw new Error('没有要修改的项');
-    // 密码项在界面上是掩码。未改动时前端不会提交它；若仍收到掩码值，说明是原样回传，
-    // 落盘会把真密码改成一串星号，直接拒绝。
+    // 密码项在界面上是掩码。未改动时前端不会提交它；若仍收到掩码值，说明是原样回传，直接拒绝。
     for (const k of Object.keys(changes)) {
       if (propsLib.isSecretKey(k) && changes[k] === propsLib.SECRET_MASK) {
         throw new Error(`「${k}」未修改，请勿提交掩码值`);
@@ -635,9 +633,8 @@ function notFound(res) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`);
-  // 只允许本机来源。面板无密码，这是唯一的 CSRF 防线：缺失时任意网页均可驱动面板
-  // （启停服务器、读写服务器目录文件）。该检查默认开启，仅在「高级设置」显式打开
-  // allowCrossSite 时才放行，不得绕过。
+  // 只允许本机来源。面板无密码，这是唯一的 CSRF 防线。该检查默认开启，仅在「高级设置」显式打开
+  // allowCrossSite 时放行，不得绕过。
   const origin = req.headers.origin;
   if (!store.getSetting('allowCrossSite', false)
       && origin && !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) {
@@ -651,7 +648,7 @@ const server = http.createServer((req, res) => {
 
 /**
  * 重新拉起一个面板进程接替自己。detached + unref 使新进程脱离本进程与 start.bat 控制台窗口。
- * 不设 MCPANEL_OPEN：重启由原页面跳转，新进程再开一个标签页会留下重复页面。
+ * 不设 MCPANEL_OPEN。
  */
 function relaunch() {
   const { spawn } = require('child_process');
@@ -689,7 +686,7 @@ function portAvailable(port) {
   });
 }
 
-// 重启时旧进程延迟释放端口，新进程须重试，不可一遇 EADDRINUSE 即判定「面板已在运行」。
+// 新进程须重试，不可一遇 EADDRINUSE 即判定「面板已在运行」。
 // 仅重启拉起的进程重试。
 const RESTARTING = process.env.MCPANEL_RESTARTED === '1';
 let bindAttempts = 0;
@@ -706,7 +703,7 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-/** 端口被占用。正常流程不到此处（start.bat 经 launch.js 先探测，识别出本面板即开浏览器）。
+/** 端口被占用。正常流程不到此处。
  * 此处兜底：直接 node server.js 撞上「面板已在运行」，或两份同时启动的竞态。 */
 async function onPortBusy() {
   if (await isOurPanel(PORT)) {
@@ -737,11 +734,11 @@ function onListening() {
   console.log('  关掉面板：界面左下角「关闭面板」，或直接结束本进程。');
   console.log('  注意：面板退出不会关闭已启动的 Minecraft 服务器。\n');
 
-  // 仅由 launch.js 设置：此处端口已监听，开浏览器不会出现「无法访问此网站」。面板重启不经此处。
+  // 仅由 launch.js 设置。面板重启不经此处。
   if (process.env.MCPANEL_OPEN === '1') openBrowser(`http://localhost:${PORT}`);
 }
 
-// 重启重试时同样触发该回调，故抽出复用
+// 重启重试时同样触发该回调，抽出复用。
 server.listen(PORT, HOST, onListening);
 
 process.on('SIGINT', () => {
