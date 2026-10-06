@@ -2,7 +2,7 @@ RS面板
 
 这是一个极其轻量化的本地mc服务器管理面板
 
-零依赖，仅使用 Node.js 标准库，支持主流模组加载器，对移动端网页适配极好
+零依赖，仅使用 Node.js 标准库，支持主流模组加载器，对移动端网页适配极好，兼容本人的frpc-tray
 
 本人发现市面上没有好用且轻量化的mc本地服务器面板，故制作了一个
 
@@ -21,7 +21,7 @@ RS panel
 
 This is a super lightweight local Minecraft server management panel.
 
-Zero dependencies, just using Node.js standard library.Works great for mobile web pages
+Zero dependencies, just using Node.js standard library.Works great for mobile web pages，Compatible with frpc-tray
 
 I noticed there isn’t a really good and lightweight MC local server panel available, so I made one.
 
