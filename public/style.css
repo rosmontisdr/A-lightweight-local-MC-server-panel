@@ -20,6 +20,8 @@
 
   --series-mem:  #3987e5;   /* 内存占用 */
   --series-play: #199e70;   /* 在线玩家 */
+  --series-frp-up: #e08a2e; /* FRP 上行 */
+  --series-frp-dn: #8b5cf6; /* FRP 下行 */
 
   --good:        #0ca30c;
   --warning:     #fab219;
@@ -47,6 +49,8 @@
 
   --series-mem:  #2a78d6;
   --series-play: #1baf7a;
+  --series-frp-up: #c07615;
+  --series-frp-dn: #6d3fe0;
 
   --good:        #0ca30c;
   --warning:     #fab219;
@@ -102,12 +106,14 @@ a { color: var(--series-mem); }
 
 .brand {
   display: flex;
-  align-items: center;
+  /* 与标题上端对齐，而非整块居中 */
+  align-items: flex-start;
   gap: 11px;
   padding: 18px 16px 16px;
   border-bottom: 1px solid var(--border-soft);
 }
-.brand-mark { display: flex; flex: none; }
+/* 3px 让图标上沿贴住 17px 标题的字形上沿 */
+.brand-mark { display: flex; flex: none; margin-top: 3px; }
 .brand-title { font-weight: 650; font-size: 17px; letter-spacing: .2px; }
 .brand-sub { font-size: 11.5px; color: var(--ink-3); }
 /* 署名行：字号小于 .brand-sub 的附属信息。不设 nowrap。 */
@@ -379,6 +385,16 @@ a { color: var(--series-mem); }
   border-radius: 12px;
   padding: 16px;
   min-width: 0;
+}
+/* 手机端（窄屏）不展示 frp 的安装入口，装 frp 是桌面上的活 */
+.is-narrow [data-card="frp-setup"],
+.is-narrow [data-card="frp-install-ctl"] { display: none; }
+
+/* 整卡可点，跳转到对应标签页 */
+.card.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+.card.clickable:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface-2);
 }
 .card-head {
   display: flex;
@@ -884,7 +900,7 @@ a { color: var(--series-mem); }
     cursor: pointer;
   }
   .menu-btn:hover, .sidebar-close:hover { background: var(--surface-3); }
-  .sidebar-close { margin-left: auto; }
+  .sidebar-close { margin-left: auto; align-self: flex-start; }
   .sidebar-close:focus-visible, .menu-btn:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }

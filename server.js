@@ -18,6 +18,8 @@ const backup = require('./lib/backup');
 const players = require('./lib/players');
 const propsLib = require('./lib/props');
 const launcher = require('./lib/launcher');
+const { Frp } = require('./lib/frp');
+const frpinstall = require('./lib/frpinstall');
 const { safeResolve } = require('./lib/util');
 const { HOST, DEFAULT_PORT, normalizePort, resolvePort, openBrowser, isOurPanel } = require('./lib/panelcfg');
 
@@ -33,6 +35,9 @@ panellog.init();
 
 const store = new Store();
 const manager = new Manager(store);
+const frp = new Frp(store, manager);
+// McServer 的状态里要带上所属隧道，反向注入以免 manager 反向依赖 frp
+manager.frpStatus = (id) => frp.statusFor(id);
 
 const PORT = resolvePort(store);
 
@@ -291,11 +296,109 @@ async function route(req, res, url) {
     return sendJson(res, 200, job);
   }
 
+  // ---- FRP ----
+  if (p === '/api/frp' && m === 'GET') {
+    return sendJson(res, 200, await frp.overview());
+  }
+
+  if (p === '/api/frp/settings' && m === 'PATCH') {
+    const body = await readJson(req);
+    frp.patchSettings(body);
+    return sendJson(res, 200, { ok: true, frp: frp.settingsSummary() });
+  }
+
+  // frpc.toml 顶层的 serverAddr / serverPort / auth.token
+  if (p === '/api/frp/config' && m === 'PATCH') {
+    const body = await readJson(req);
+    const r = frp.writeTop(body);
+    return sendJson(res, 200, { ok: true, ...r, frp: frp.settingsSummary() });
+  }
+
+  if (p === '/api/frp/start' && m === 'POST') {
+    return sendJson(res, 200, { ok: true, ...(await frp.start()) });
+  }
+
+  if (p === '/api/frp/stop' && m === 'POST') {
+    return sendJson(res, 200, { ok: true, ...(await frp.stop()) });
+  }
+
+  if (p === '/api/frp/reload' && m === 'POST') {
+    return sendJson(res, 200, { ok: true, ...(await frp.reload()) });
+  }
+
+  // 给 frpc.toml 补 [webServer] 段，供面板读逐条隧道状态
+  if (p === '/api/frp/admin' && m === 'POST') {
+    return sendJson(res, 200, { ok: true, ...(await frp.enableAdmin()) });
+  }
+
+  if (p === '/api/frp/download' && m === 'GET') {
+    return sendJson(res, 200, { job: frpinstall.getJob() });
+  }
+
+  if (p === '/api/frp/download' && m === 'POST') {
+    const body = await readJson(req);
+    // 安装会覆盖 frpc.exe；有 frpc 在跑时既会锁文件，也等于在运行的进程底下换二进制
+    const st0 = await frp.processState();
+    if (st0.running) {
+      throw new Error(`已有 frpc 在运行（PID ${st0.pid}），面板不会去动它。请先停止它再安装。`);
+    }
+    const job = frpinstall.startDownload({
+      mirror: frp.getSettings().mirror,
+      version: body.version || frp.getSettings().version,
+      frpDir: body.dir || frp.resolveDir(),
+    });
+    return sendJson(res, 200, { ok: true, job });
+  }
+
+  if (p === '/api/frp/proxies' && m === 'POST') {
+    const body = await readJson(req);
+    const proxy = frp.createProxy(body, body.serverId || null);
+    return sendJson(res, 200, { ok: true, proxy });
+  }
+
+  const fpm = p.match(/^\/api\/frp\/proxies\/([^/]+)$/);
+  if (fpm && m === 'PATCH') {
+    const body = await readJson(req);
+    const r = frp.updateProxy(decodeURIComponent(fpm[1]), body, body.serverId || null);
+    return sendJson(res, 200, { ok: true, ...r });
+  }
+  if (fpm && m === 'DELETE') {
+    frp.removeProxy(decodeURIComponent(fpm[1]));
+    return sendJson(res, 200, { ok: true });
+  }
+
   // ---- 单台服务器 ----
   const sm = p.match(/^\/api\/servers\/([^/]+)(\/.*)?$/);
   if (!sm) return notFound(res);
   const server = requireServer(decodeURIComponent(sm[1]));
   const sub = sm[2] || '';
+
+  // 该服务器对应的 FRP 隧道
+  if (sub === '/frp' && m === 'GET') {
+    return sendJson(res, 200, await frp.serverFrp(server.id));
+  }
+
+  if (sub === '/frp' && m === 'PUT') {
+    const body = await readJson(req);
+    // 已有关联（含按端口推断出来的）就地改，没有才新建
+    const cur = frp.associationFor(server.id).proxy;
+    if (cur) frp.updateProxy(cur.name, body, server.id);
+    else frp.createProxy(body, server.id);
+    return sendJson(res, 200, await frp.serverFrp(server.id));
+  }
+
+  if (sub === '/frp' && m === 'DELETE') {
+    const { proxy } = frp.associationFor(server.id);
+    if (!proxy) throw new Error('这台服务器还没有关联隧道');
+    frp.removeProxy(proxy.name);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // 只改「服务器 ↔ 隧道」的关联记录，不动 frpc.toml
+  if (sub === '/frp/attach' && m === 'POST') {
+    const body = await readJson(req);
+    return sendJson(res, 200, { ok: true, ...frp.attach(server.id, body.name || null) });
+  }
 
   if (sub === '' && m === 'GET') {
     const status = await server.refresh(true);
@@ -651,15 +754,18 @@ const server = http.createServer((req, res) => {
 
 /**
  * 重新拉起一个面板进程接替自己。detached + unref 使新进程脱离本进程与 start.bat 控制台窗口。
- * 不设 MCPANEL_OPEN。
+ * 继承环境变量时须摘掉 MCPANEL_OPEN：由 launch.js 起的面板带着它，直接继承会让重启后的
+ * 面板再开一个浏览器标签页，而浏览器那一侧已经自己切过去了。
  */
 function relaunch() {
   const { spawn } = require('child_process');
+  const env = { ...process.env, MCPANEL_RESTARTED: '1' };
+  delete env.MCPANEL_OPEN;
   const child = spawn(process.execPath, [__filename], {
     cwd: __dirname,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, MCPANEL_RESTARTED: '1' },
+    env,
   });
   child.unref();
 }
@@ -675,6 +781,8 @@ function panelInfo() {
     version: require('./package.json').version,
     pid: process.pid,
     logFile: panellog.LOG_FILE,
+    // 供界面回填输入框，避免为了这些设置去调 /api/frp（那会做一次进程枚举）
+    frp: frp.settingsSummary(),
   };
 }
 
@@ -710,8 +818,9 @@ server.on('error', (e) => {
  * 此处兜底：直接 node server.js 撞上「面板已在运行」，或两份同时启动的竞态。 */
 async function onPortBusy() {
   if (await isOurPanel(PORT)) {
-    console.log(`\n[·] 面板已经在 http://localhost:${PORT} 运行了，正在为你打开浏览器...\n`);
-    openBrowser(`http://localhost:${PORT}`);
+    console.log(`\n[·] 面板已经在 http://localhost:${PORT} 运行了。\n`);
+    // 重启交接时浏览器已经自己切过去了，此处不再多开一个标签页
+    if (!RESTARTING) openBrowser(`http://localhost:${PORT}`);
     setTimeout(() => process.exit(0), 500);
     return;
   }
@@ -737,8 +846,15 @@ function onListening() {
   console.log('  关掉面板：界面左下角「关闭面板」，或直接结束本进程。');
   console.log('  注意：面板退出不会关闭已启动的 Minecraft 服务器。\n');
 
-  // 仅由 launch.js 设置。面板重启不经此处。
-  if (process.env.MCPANEL_OPEN === '1') openBrowser(`http://localhost:${PORT}`);
+  // 清掉上次中断留下的下载暂存目录
+  frpinstall.cleanupStale();
+  frp.startSampler();
+
+  // 仅由 launch.js 设置。重启不经此处，浏览器那一侧会自己切过去。
+  if (process.env.MCPANEL_OPEN === '1' && !RESTARTING) {
+    console.log(`  已在浏览器中打开 http://localhost:${PORT}\n`);
+    openBrowser(`http://localhost:${PORT}`);
+  }
 }
 
 // 重启重试时同样触发该回调，抽出复用。
@@ -746,9 +862,11 @@ server.listen(PORT, HOST, onListening);
 
 process.on('SIGINT', () => {
   const owned = manager.ownedPids();
-  if (owned.length) {
-    console.log('\n[面板] 以下服务器由本面板启动，退出后它们会继续运行：');
+  const frpRec = store.getSetting('frpLaunched', null);
+  if (owned.length || frpRec) {
+    console.log('\n[面板] 以下进程由本面板启动，退出后它们会继续运行：');
     for (const o of owned) console.log(`       · ${o.name} (PID ${o.pid})`);
+    if (frpRec && frpRec.pid) console.log(`       · frpc (PID ${frpRec.pid})`);
     console.log('[面板] 如需一并停止，请在面板里点「停止」，或稍后手动结束这些 PID。');
   }
   process.exit(0);

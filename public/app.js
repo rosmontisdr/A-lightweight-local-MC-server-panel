@@ -91,6 +91,7 @@ const TABS = [
   { id: 'players', label: '玩家' },
   { id: 'config', label: '服务器配置' },
   { id: 'logs', label: '日志' },
+  { id: 'frp', label: 'FRP 管理' },
   { id: 'backups', label: '备份' },
 ];
 
@@ -127,6 +128,11 @@ function fmtBytes(n) {
   let i = 0;
   while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
   return `${n.toFixed(i === 0 ? 0 : 1)} ${u[i]}`;
+}
+
+/** 速率：字节/秒 */
+function fmtRate(n) {
+  return n == null ? '—' : fmtBytes(n) + '/s';
 }
 
 function fmtDuration(ms) {
@@ -288,12 +294,18 @@ function createChart(container, opts) {
   const gGrid = svgEl('g');
   const area = svgEl('path', { fill: `url(#${gid})` });
   const line = svgEl('path', { fill: 'none', stroke: opts.color, 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+  // 第二条序列（可选），只画线不铺渐变
+  const line2 = opts.color2
+    ? svgEl('path', { fill: 'none', stroke: opts.color2, 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' })
+    : null;
   const cross = svgEl('line', { stroke: 'var(--axis)', 'stroke-width': '1', 'stroke-dasharray': '3 3', opacity: '0' });
   const dot = svgEl('circle', { r: '4', fill: opts.color, stroke: 'var(--surface)', 'stroke-width': '2', opacity: '0' });
   const endDot = svgEl('circle', { r: '3.5', fill: opts.color, stroke: 'var(--surface)', 'stroke-width': '2' });
   const endLabel = svgEl('text', { fill: 'var(--ink-2)', 'font-size': '11.5', 'font-weight': '600', 'dominant-baseline': 'middle' });
   const hit = svgEl('rect', { fill: 'transparent', y: 0 });
-  svg.append(gGrid, area, line, cross, dot, endDot, endLabel, hit);
+  svg.append(gGrid, area, line);
+  if (line2) svg.appendChild(line2);
+  svg.append(cross, dot, endDot, endLabel, hit);
 
   const tip = document.createElement('div');
   tip.className = 'chart-tip';
@@ -302,6 +314,7 @@ function createChart(container, opts) {
   container.appendChild(wrap);
 
   let pts = [];
+  let pts2 = [];
   let W = 400;
   const emptyEl = document.createElement('div');
   emptyEl.className = 'chart-empty';
@@ -325,6 +338,7 @@ function createChart(container, opts) {
       gGrid.innerHTML = '';
       area.setAttribute('d', '');
       line.setAttribute('d', '');
+      if (line2) line2.setAttribute('d', '');
       endDot.setAttribute('opacity', '0');
       endLabel.setAttribute('opacity', '0');
       if (!wrap.querySelector('.chart-empty')) wrap.appendChild(emptyEl);
@@ -333,7 +347,7 @@ function createChart(container, opts) {
     }
     emptyEl.remove();
 
-    const values = pts.map((p) => p.v);
+    const values = pts.map((p) => p.v).concat(pts2.map((p) => p.v));
     const rawMax = Math.max(...values);
     const rawMin = opts.zeroBase === false ? Math.min(...values) : 0;
     const top = opts.suggestMax ? Math.max(rawMax, opts.suggestMax) : rawMax;
@@ -360,6 +374,11 @@ function createChart(container, opts) {
     const lineD = pts.map((p, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(p.v).toFixed(1)}`).join(' ');
     line.setAttribute('d', lineD);
     area.setAttribute('d', `${lineD} L${xs(pts.length - 1).toFixed(1)},${height - pad.b} L${pad.l},${height - pad.b} Z`);
+    if (line2) {
+      line2.setAttribute('d', pts2.length > 1
+        ? pts2.map((p, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(p.v).toFixed(1)}`).join(' ')
+        : '');
+    }
 
     const last = pts[pts.length - 1];
     const lx = xs(pts.length - 1);
@@ -398,9 +417,10 @@ function createChart(container, opts) {
     dot.setAttribute('opacity', '1');
 
     const wrapRect = wrap.getBoundingClientRect();
-    tip.innerHTML = `<div class="tip-time">${fmtTime(p.t)}</div>
-      <div class="tip-row"><span class="tip-dot" style="background:${opts.color}"></span>
-      <span>${esc(opts.format ? opts.format(p.v) : p.v)}${opts.unit ? ' ' + esc(opts.unit) : ''}</span></div>`;
+    const row = (color, v) => `<div class="tip-row"><span class="tip-dot" style="background:${color}"></span>
+      <span>${esc(opts.format ? opts.format(v) : v)}${opts.unit ? ' ' + esc(opts.unit) : ''}</span></div>`;
+    tip.innerHTML = `<div class="tip-time">${fmtTime(p.t)}</div>` + row(opts.color, p.v)
+      + (pts2[i] ? row(opts.color2, pts2[i].v) : '');
     tip.classList.add('on');
     const tw = tip.offsetWidth;
     let left = x + 12;
@@ -430,7 +450,7 @@ function createChart(container, opts) {
   ro.observe(wrap);
 
   return {
-    update(next) { pts = next || []; draw(); },
+    update(next, next2) { pts = next || []; pts2 = next2 || []; draw(); },
     destroy() { ro.disconnect(); },
   };
 }
@@ -507,7 +527,7 @@ function recordHistory(st) {
   if (!st) return;
   let h = S.history.get(st.id);
   if (!h) {
-    h = { t: [], mem: [], cpu: [], players: [] };
+    h = { t: [], mem: [], cpu: [], players: [], frpIn: [], frpOut: [] };
     S.history.set(st.id, h);
   }
   const last = h.t[h.t.length - 1];
@@ -517,8 +537,12 @@ function recordHistory(st) {
   h.mem.push(st.running ? memStats(st).usedMb : 0);
   h.cpu.push(st.running ? (st.cpu || 0) : 0);
   h.players.push(st.running ? st.players.online : 0);
+  // FRP 隧道吞吐，单位 B/s；没有数据时记 0
+  h.frpIn.push(st.frp && st.frp.rateIn != null ? st.frp.rateIn : 0);
+  h.frpOut.push(st.frp && st.frp.rateOut != null ? st.frp.rateOut : 0);
   while (h.t.length > HISTORY_LEN) {
     h.t.shift(); h.mem.shift(); h.cpu.shift(); h.players.shift();
+    h.frpIn.shift(); h.frpOut.shift();
   }
 }
 
@@ -733,6 +757,7 @@ function renderTab() {
   if (S.tab === 'players') return renderPlayers(content, st);
   if (S.tab === 'config') return renderConfig(content, st);
   if (S.tab === 'logs') return renderLogs(content, st);
+  if (S.tab === 'frp') return renderFrp(content, st);
   if (S.tab === 'backups') return renderBackups(content, st);
 }
 
@@ -784,6 +809,90 @@ function memStats(st) {
     hintSuffix: '',
     byHeap: false,
   };
+}
+
+/** FRP 卡片副标题：正常时是图例，异常时说明原因 */
+function frpSubText(st) {
+  const f = st.frp;
+  if (!f || !f.attached || frpCardHTML(st)) return `最近 ${HISTORY_LEN} 秒`;
+  const dot = (c) => `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${c};margin:0 4px 0 8px;vertical-align:middle"></span>`;
+  return `${dot('var(--series-frp-up)')}上行${dot('var(--series-frp-dn)')}下行`;
+}
+
+/**
+ * 网络状况卡片处于哪种状态。既决定正文内容，也用来判断要不要重画——
+ * 装没装、配没配、下载进度都会让它变。
+ */
+function frpCardState(st, ov) {
+  const f = st.frp;
+  const job = (ov && ov.download && ov.download.job) || null;
+  if (!f || !f.installed) {
+    if (job && job.status === 'running') return 'downloading';
+    return job && job.status === 'error' ? 'dl-error' : 'no-frpc';
+  }
+  if (!f.attached) return 'no-tunnel';
+  if (f.trafficError) return 'no-traffic';
+  return 'chart';
+}
+
+/** 网络状况卡片主体：画图时返回空串，其余各态返回一句状态加出口 */
+function frpCardHTML(st, ov) {
+  const job = (ov && ov.download && ov.download.job) || null;
+  const box = (inner) => `<div class="empty" style="padding:18px 8px;line-height:1.8">${inner}</div>`;
+  const btn = (label, attrs, wrapAttrs) => `<div style="margin-top:12px" ${wrapAttrs || ''}><button class="btn btn-sm" ${attrs}>${label}</button></div>`;
+
+  switch (frpCardState(st, ov)) {
+    case 'downloading':
+      return box(`正在下载 frp…
+        <div class="meter" style="margin-top:10px"><i style="width:${job.percent || 0}%"></i></div>
+        <div class="muted" style="font-size:12px">${esc(job.phase || '')}${job.total ? ` · ${fmtBytes(job.received)} / ${fmtBytes(job.total)}` : ''}</div>`);
+    case 'dl-error':
+      return box(`未安装frpc${btn('一键下载', 'data-action="frp-download"', 'data-card="frp-install-ctl"')}
+        <div class="danger-box" style="margin-top:10px">${esc(job.error)}</div>`);
+    case 'no-frpc':
+      return box(`未安装frpc${btn('一键下载', 'data-action="frp-download"', 'data-card="frp-install-ctl"')}`);
+    case 'no-tunnel':
+      return box('未配置隧道' + btn('去 FRP 管理', 'data-action="tab" data-tab="frp"'));
+    case 'no-traffic':
+      return box('未配置 frps 管理接口' + btn('配置', 'data-action="frp-open-settings"'));
+    default:
+      return '';
+  }
+}
+
+/** 全部隧道卡片的副标题：条数 + 配置文件名 */
+function frpTunnelsSub(ov) {
+  if (!ov || !ov.toml) return '读取中…';
+  const p = ov.toml.path || '';
+  const n = (ov.toml.proxies || []).length;
+  return `${n} 条${p ? ' · ' + p.split(/[\\/]/).pop() : ''}`;
+}
+
+/** 全部隧道列表，供概览页与 FRP 页共用 */
+function frpTunnelsHTML(ov) {
+  if (!ov) return '<div class="empty">读取中…</div>';
+  if (!ov.toml || !ov.toml.exists) return '<div class="empty">没有 frpc.toml</div>';
+  const list = ov.toml.proxies || [];
+  if (!list.length) return '<div class="empty">还没有隧道</div>';
+
+  const state = (x) => {
+    if (x.statusKnown === false) return '<span class="muted" title="没有可用的状态来源">状态未知</span>';
+    if (x.statusSource === 'conn') {
+      return x.online
+        ? '<span style="color:var(--good)" title="frpc 已连上 frps；整条链路的旁证，分不出单条隧道">运行中</span>'
+        : '<span style="color:var(--critical)" title="frpc 进程在跑，但没连上 frps">未连上</span>';
+    }
+    return x.online ? '<span style="color:var(--good)">在线</span>' : '<span style="color:var(--critical)">离线</span>';
+  };
+
+  return `<table class="kv" style="width:100%">
+    ${list.map((x) => `<tr>
+      <td class="mono">${esc(x.name)}</td>
+      <td class="mono muted" style="font-size:11.5px">${esc(x.localIP || '')}:${x.localPort ?? '?'} → :${x.remotePort ?? '?'}</td>
+      <td>${state(x)}</td>
+      <td class="muted"${x.attachHow === 'byPort' ? ' title="按本地端口自动识别，还没记进面板；在那台服务器的 FRP 页保存一次即可固定"' : ''}>${x.serverId ? esc((S.servers.find((s) => s.id === x.serverId) || {}).name || '已关联') : '未关联'}</td>
+    </tr>`).join('')}
+  </table>`;
 }
 
 function renderOverview(content, st) {
@@ -848,6 +957,23 @@ function renderOverview(content, st) {
     </div>
 
     <div class="cards">
+      <div class="card clickable" data-action="tab" data-tab="frp" title="点击管理 FRP 隧道">
+        <div class="card-head">
+          <div class="card-title">网络状况</div>
+          <div class="card-sub">${frpSubText(st)}</div>
+        </div>
+        <div id="frpCardBody">${frpCardHTML(st, S.view.frpOv) || '<div id="chartFrp"></div>'}</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">全部隧道</div>
+          <div class="card-sub" id="frpTunnelsSub">${frpTunnelsSub(S.view.frpOv)}</div>
+        </div>
+        <div id="frpTunnels">${frpTunnelsHTML(S.view.frpOv)}</div>
+      </div>
+    </div>
+
+    <div class="cards">
       <div class="card">
         <div class="card-head"><div class="card-title">连接信息</div></div>
         ${st.portMismatch ? `<div class="console-hint" style="border-radius:9px;margin-bottom:12px">
@@ -907,8 +1033,68 @@ function renderOverview(content, st) {
     format: (v) => `${Math.round(v)} 人`,
     suggestMax: Math.max(st.players.max, 1),
   });
+  // 隧道不可用时卡片里放的是提示而不是图
+  if ($('#chartFrp')) {
+    S.view.chartFrp = createChart($('#chartFrp'), {
+      color: 'var(--series-frp-up)',
+      color2: 'var(--series-frp-dn)',
+      height: 156,
+      emptyText: '正在采集数据…',
+      formatAxis: (v) => fmtBytes(v),
+      format: fmtRate,
+      suggestMax: 1024,
+    });
+  }
+
+  S.view.frpCardState = frpCardState(st, S.view.frpOv);
+
+  // 隧道列表只在没缓存时补拉；卡片正文由 updateOverview 按状态刷新
+  if (!S.view.frpOv) {
+    api('/api/frp').then((r) => {
+      S.view.frpOv = r;
+      patchFrpCards(currentStatus() || st, r);
+    }).catch((e) => {
+      const el = $('#frpTunnels');
+      if (el) el.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    });
+  }
 
   updateOverview(st);
+  frpCardPoll();
+}
+
+/** 只更新「网络状况」与「全部隧道」两张卡的内容；st 必须是当下最新的 */
+function patchFrpCards(st, r) {
+  if (r.settings) S.panel = { ...S.panel, frp: r.settings };   // 顺带刷新弹窗的回填值
+  const body = $('#frpCardBody');
+  if (body) {
+    const state = frpCardState(st, r);
+    if (state === 'chart') {
+      if (!$('#chartFrp')) { renderTab(); return; }   // 装好了，该把折线图建出来
+    } else {
+      S.view.frpCardState = state;
+      body.innerHTML = frpCardHTML(st, r);
+    }
+  }
+  const el = $('#frpTunnels');
+  if (el) el.innerHTML = frpTunnelsHTML(r);
+  const sub = $('#frpTunnelsSub');
+  if (sub) sub.textContent = frpTunnelsSub(r);
+}
+
+/** 下载进行中时轮询进度 */
+function frpCardPoll() {
+  const job = S.view.frpOv && S.view.frpOv.download && S.view.frpOv.download.job;
+  if (!job || job.status !== 'running') return;
+  setTimeout(async () => {
+    if (S.tab !== 'overview') return;
+    try {
+      const r = await api('/api/frp');
+      S.view.frpOv = r;
+      patchFrpCards(currentStatus(), r);
+    } catch {}
+    frpCardPoll();
+  }, 1200);
 }
 
 const TPS_TIP = 'TPS 由面板自动查询（约每 30 秒一次），不需要手动操作。\n'
@@ -962,6 +1148,23 @@ function updateOverview(st) {
 
   S.view.chartMem.update(h.t.map((t, i) => ({ t, v: h.mem[i] })));
   S.view.chartPlayers.update(h.t.map((t, i) => ({ t, v: h.players[i] })));
+  if (S.view.chartFrp) {
+    S.view.chartFrp.update(
+      h.t.map((t, i) => ({ t, v: h.frpIn[i] || 0 })),
+      h.t.map((t, i) => ({ t, v: h.frpOut[i] || 0 })),
+    );
+  }
+
+  // 网络状况卡在提示态时随状态重画；一旦能画图了就把图表建出来
+  if ($('#frpCardBody')) {
+    const state = frpCardState(st, S.view.frpOv);
+    if (state === 'chart') {
+      if (!$('#chartFrp')) renderTab();
+    } else if (state !== S.view.frpCardState) {
+      S.view.frpCardState = state;
+      $('#frpCardBody').innerHTML = frpCardHTML(st, S.view.frpOv);
+    }
+  }
 }
 
 /* ─────────────────────────── 控制台 ─────────────────────────── */
@@ -1602,6 +1805,8 @@ async function openPanelSettings() {
   const p = S.panel || {};
   const curTheme = document.documentElement.dataset.theme || 'dark';
   const curAccent = localStorage.getItem('mcpanel-accent') || 'green';
+  // FRP 相关设置随面板信息一起下发，弹窗不必再发请求
+  const frpSet = p.frp || {};
 
   const res = await openModal({
     title: '高级设置',
@@ -1656,6 +1861,34 @@ async function openPanelSettings() {
         </div>`}
 
         <div class="field">
+          <label>FRP 下载源</label>
+          <div class="row">
+            <input class="input mono" data-frp-mirror style="flex:1"
+                   value="${esc(frpSet.mirror || '')}" placeholder="下载镜像前缀，留空 = GitHub 官方">
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input class="input mono" data-frp-version style="flex:1"
+                   value="${esc(frpSet.version || '')}" placeholder="指定版本，如 0.71.0；留空则取最新">
+          </div>
+        </div>
+
+        <div class="field" data-card="frp-setup">
+          <label>FRP 目录</label>
+          <div class="row">
+            <input class="input mono" data-frp-dir style="flex:1" readonly value="${esc(frpSet.dir || '')}">
+            <button class="btn btn-sm" data-frp-pick-dir>选择目录</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>FRP 连接设置</label>
+          <button class="btn btn-sm" data-frp-settings>FRP 设置…</button>
+          <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.7">
+            frps 地址与端口、认证 token，以及画吞吐折线图用的 dashboard 地址与端口。
+          </div>
+        </div>
+
+        <div class="field">
           <label>运行信息</label>
           <dl class="kv">
             <dt>版本</dt><dd>v${esc(p.version ?? '—')}</dd>
@@ -1703,6 +1936,27 @@ async function openPanelSettings() {
         close(null);
         formatPanel();
       };
+
+      // FRP 设置是另一个弹窗，先关掉本弹窗再打开
+      bodyEl.querySelector('[data-frp-settings]').onclick = () => {
+        close(null);
+        openFrpSettings();
+      };
+
+      // FRP 目录：选完立即保存，不必等「保存」
+      bodyEl.querySelector('[data-frp-pick-dir]').onclick = async () => {
+        const dir = await browseForDir(frpSet.dir || '');
+        if (!dir) return;
+        try {
+          const r = await api('/api/frp/settings', { method: 'PATCH', body: { dir } });
+          if (r.frp) S.panel = { ...S.panel, frp: r.frp };
+          bodyEl.querySelector('[data-frp-dir]').value = (r.frp && r.frp.dir) || dir;
+          invalidateFrp();
+          toast('frp 目录已切换', 'ok', 3000);
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      };
     },
     actions: [
       { label: '取消', variant: 'ghost' },
@@ -1714,6 +1968,8 @@ async function openPanelSettings() {
           // 移动端无此开关，不提交该项。
           const xs = bodyEl.querySelector('[data-xsite="1"]');
           if (xs) out.allowCrossSite = xs.classList.contains('on');
+          out.frpMirror = bodyEl.querySelector('[data-frp-mirror]').value.trim();
+          out.frpVersion = bodyEl.querySelector('[data-frp-version]').value.trim();
           return out;
         },
       },
@@ -1721,6 +1977,20 @@ async function openPanelSettings() {
   });
 
   if (!res || res.port === '') return;
+
+  // FRP 下载源存的是另一处设置，先提交，且不影响面板本身的改动
+  const frpBody = {};
+  if ((res.frpMirror || '') !== (frpSet.mirror || '')) frpBody.mirror = res.frpMirror || '';
+  if ((res.frpVersion || '') !== (frpSet.version || '')) frpBody.version = res.frpVersion || '';
+  if (Object.keys(frpBody).length) {
+    try {
+      await api('/api/frp/settings', { method: 'PATCH', body: frpBody });
+      S.panel = { ...S.panel, frpMirror: res.frpMirror, frpVersion: res.frpVersion };
+      invalidateFrp();
+    } catch (e) {
+      toast('FRP 下载源没保存成功：' + e.message, 'err', 10000);
+    }
+  }
 
   // 两项设置各自判断变化，只提交变了的项。
   const body = {};
@@ -2051,6 +2321,421 @@ async function openLaunchSettings() {
   } catch (e) {
     toast(e.message, 'err');
   }
+}
+
+/* ─────────────────────────── FRP 管理 ─────────────────────────── */
+
+function invalidateFrp() {
+  S.view.frp = null;
+  S.view.frpSrv = null;
+  S.view.frpFor = null;
+  S.view.frpOv = null;
+  S.view.frpCardState = null;
+}
+
+/** 隧道状态：只给状态与出处，细节走悬停提示 */
+function frpTunnelLine(sr) {
+  const TIP_CONN = 'frpc 与 frps 的连接是整条链路的旁证，分不出单条隧道；'
+    + '要精确到每条，需启用 frpc 管理接口或填 frps dashboard。';
+  if (!sr.attached) {
+    return sr.attachHow === 'ambiguous'
+      ? '<span class="muted">有多条候选</span>'
+      : '<span class="muted">尚未配置</span>';
+  }
+  const t = sr.tunnel;
+  if (!t) {
+    return '<b>状态未知</b><span class="muted" title="没有可用的状态来源">？</span>';
+  }
+  if (t.source === 'conn') {
+    return t.online
+      ? `<b style="color:var(--good)" title="${esc(TIP_CONN)}">运行中</b>`
+      : `<b style="color:var(--critical)" title="frpc 进程在跑，但没有到 ${esc(t.remoteAddr || '')} 的连接">未连上 frps</b>`;
+  }
+  const where = t.source === 'frpc' ? 'frpc 管理接口' : 'frps dashboard';
+  const addr = t.localAddr && t.remoteAddr
+    ? ` <span class="mono">${esc(t.localAddr)}</span> → <span class="mono">${esc(t.remoteAddr)}</span>`
+    : '';
+  const title = t.err ? `服务端回报：${esc(t.err)}` : `据 ${where}`;
+  return `<b style="color:${t.online ? 'var(--good)' : 'var(--critical)'}" title="${title}">${t.online ? '在线' : '离线'}</b>`
+    + addr;
+}
+
+async function renderFrp(content, st) {
+  if (!S.view.frp || S.view.frpFor !== S.current) {
+    content.innerHTML = '<div class="empty">正在读取 FRP 状态…</div>';
+    try {
+      const [ov, srv] = await Promise.all([api('/api/frp'), api(`/api/servers/${S.current}/frp`)]);
+      S.view.frp = ov;
+      S.view.frpSrv = srv;
+      S.view.frpFor = S.current;
+      S.view.frpOv = ov;   // 概览页的「全部隧道」卡片共用同一份
+      if (ov.settings) S.panel = { ...S.panel, frp: ov.settings };
+    } catch (e) {
+      content.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+      return;
+    }
+    if (S.tab !== 'frp') return;
+    return renderTab();
+  }
+
+  const ov = S.view.frp;
+  const sr = S.view.frpSrv;
+  const proc = ov.process || {};
+  const sug = sr.suggestions || {};
+  const p = sr.proxy || { ...sug };
+  const busy = S.busy.has('frp');
+
+  content.innerHTML = `
+    <div class="cards">
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">frpc 进程</div>
+          <div class="card-sub">${proc.running ? `PID ${proc.pid}${proc.how === 'foreign' ? '（不是面板启动的）' : ''}` : '未运行'}</div>
+        </div>
+        <div class="field">
+          <div class="row" style="flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" data-action="frp-start" ${!ov.installed || proc.running || busy ? 'disabled' : ''}>启动 frpc</button>
+            <button class="btn btn-sm" data-action="frp-stop" ${!proc.running || busy ? 'disabled' : ''}>停止 frpc</button>
+            <button class="btn btn-sm btn-ghost" data-action="frp-reload" ${!proc.running ? 'disabled' : ''}>重载配置</button>
+          </div>
+          ${ov.installed && ov.toml.exists && !ov.admin.enabled ? `
+          <div class="warn-box" style="margin-top:10px">
+            frpc.toml 里没有 <span class="mono">[webServer]</span> 段，面板读不到每条隧道的状态。
+            ${ov.statusSource === 'none' ? '配上它（或 frps dashboard）之后，隧道在线状态才是准的。' : ''}
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn btn-sm" data-action="frp-enable-admin">启用管理接口</button>
+            <span class="muted" style="font-size:12px">写入配置，需重启 frpc 生效</span>
+          </div>` : ''}
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>frp 连携启动</label>
+          <div class="seg" data-seg="frp-auto">
+            <button type="button" data-frp-auto="0" class="${ov.autoStart ? '' : 'on'}">关闭</button>
+            <button type="button" data-frp-auto="1" class="${ov.autoStart ? 'on' : ''}">开启</button>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.7">
+            开启后，面板启动时会自动把 frpc 一起拉起来。面板退出<b>不会</b>关闭 frpc。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-head">
+          <div class="card-title">本服务器的隧道</div>
+          <div class="card-sub">${sr.attached ? esc(sr.proxyName) : (sr.attachHow === 'ambiguous' ? '有多条候选' : '尚未配置')}</div>
+        </div>
+        ${!ov.installed ? `<div class="warn-box">还没装 frpc，先去「高级设置」选好 frp 目录，或在概览页下载一份。</div>` : ''}
+        ${sr.attachHow === 'ambiguous' ? `<div class="warn-box">
+          有好几条隧道的本地端口都指向这台服务器，请用右边的下拉选一条。</div>` : ''}
+        ${sr.stale ? `<div class="warn-box">隧道的本地端口是 <span class="mono">${sr.stale.localPort}</span>，
+          但服务器现在实际监听 <span class="mono">${sr.stale.serverPort}</span>。点「保存」会按当前端口修正。</div>` : ''}
+        <div class="row" style="flex-wrap:wrap;gap:10px">
+          <div class="field" style="margin:0;flex:1;min-width:150px">
+            <label>隧道名</label>
+            <input class="input mono" data-frp="name" value="${esc(p.name || '')}">
+          </div>
+          <div class="field" style="margin:0;flex:1;min-width:150px">
+            <label>本地地址</label>
+            <input class="input mono" data-frp="localIP" value="${esc(p.localIP || '127.0.0.1')}">
+          </div>
+          <div class="field" style="margin:0;width:130px">
+            <label>本地端口</label>
+            <input class="input mono" type="number" min="1" max="65535" data-frp="localPort" value="${p.localPort ?? ''}">
+          </div>
+          <div class="field" style="margin:0;width:130px">
+            <label>远端端口</label>
+            <input class="input mono" type="number" min="1" max="65535" data-frp="remotePort" value="${p.remotePort ?? ''}">
+          </div>
+          <div class="field" style="margin:0;align-self:flex-end">
+            <button class="btn btn-primary btn-sm" data-action="frp-save-proxy" ${!ov.installed ? 'disabled' : ''}>${sr.attached ? '保存' : '创建隧道'}</button>
+          </div>
+          ${sr.attached ? `<div class="field" style="margin:0;align-self:flex-end">
+            <button class="btn btn-danger btn-sm" data-action="frp-del-proxy">删除隧道</button>
+          </div>` : ''}
+        </div>
+        <div class="field" style="margin:12px 0 0">
+          <label>关联到哪条隧道</label>
+          <div class="row">
+            <select class="select" data-frp-attach style="flex:1;max-width:360px">
+              <option value="">不关联</option>
+              ${(sr.proxies || []).map((x) => `<option value="${esc(x.name)}" ${sr.proxyName === x.name ? 'selected' : ''}>${esc(x.name)}　:${x.localPort ?? '?'} → :${x.remotePort ?? '?'}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
+          隧道状态：${frpTunnelLine(sr)}
+        </div>
+      </div>
+    </div>`;
+
+
+
+  // 连携启动开关：改动即保存
+  content.querySelector('[data-seg="frp-auto"]')?.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-frp-auto]');
+    if (!b) return;
+    for (const x of content.querySelectorAll('[data-frp-auto]')) x.classList.toggle('on', x === b);
+    try {
+      await api('/api/frp/settings', { method: 'PATCH', body: { autoStart: b.dataset.frpAuto === '1' } });
+      toast(b.dataset.frpAuto === '1' ? '已开启连携启动' : '已关闭连携启动', 'ok', 3000);
+    } catch (err) {
+      toast(err.message, 'err');
+      invalidateFrp();
+    }
+  });
+
+  // 重新指定「服务器 ↔ 隧道」的关联，只改记录不动配置文件
+  content.querySelector('[data-frp-attach]')?.addEventListener('change', async (e) => {
+    const name = e.target.value;
+    try {
+      await api(`/api/servers/${S.current}/frp/attach`, { method: 'POST', body: { name } });
+      await frpRefresh();
+      toast(name ? `已关联到 ${name}` : '已取消关联', 'ok', 3000);
+    } catch (err) {
+      toast(err.message, 'err');
+      await frpRefresh();
+    }
+  });
+
+}
+
+async function frpRefresh() {
+  invalidateFrp();
+  renderTab();
+}
+
+async function frpPickDir() {
+  const dir = await browseForDir((S.view.frp && S.view.frp.dir) || '');
+  if (!dir) return;
+  try {
+    await api('/api/frp/settings', { method: 'PATCH', body: { dir } });
+    await frpRefresh();
+    toast('frp 目录已切换', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+async function frpDownload() {
+  try {
+    await api('/api/frp/download', { method: 'POST', body: {} });
+  } catch (e) {
+    return toast(e.message, 'err', 10000);
+  }
+  S.view.frpOv = null;
+  if (S.tab === 'overview') renderTab();
+}
+
+async function frpEnableAdmin() {
+  const ok = await confirmDanger({
+    title: '启用 frpc 管理接口',
+    message: '面板会往 frpc.toml 追加一个只监听 127.0.0.1 的 [webServer] 段，'
+      + '用来读每条隧道的在线状态与错误。段里的端口和密码由面板随机生成。',
+    detail: '配置里已经有 [webServer] 段的话会原样保留，不会覆盖。<br>'
+      + '面板<b>不会</b>去重启 frpc——写进去之后，等你下次自己重启它时才生效。<br>'
+      + '这只是让状态更精确；不启用也能从 frpc 与 frps 的连接看出隧道在不在跑。',
+    confirmLabel: '写入',
+    tone: 'info',
+  });
+  if (!ok) return;
+  try {
+    const r = await api('/api/frp/admin', { method: 'POST' });
+    await frpRefresh();
+    toast(r.message, 'ok', 9000);
+  } catch (e) {
+    toast(e.message, 'err', 10000);
+  }
+}
+
+async function frpProc(action, label) {
+  // 停掉别人的 frpc 会断掉所有隧道，且面板不会自动再拉起来，先确认
+  if (action === 'stop') {
+    const proc = (S.view.frp && S.view.frp.process) || null;
+    if (proc && proc.how === 'foreign') {
+      const ok = await confirmDanger({
+        title: '停止 frpc',
+        message: '这个 frpc 不是面板启动的，停掉它会让所有隧道断开，而且面板不会把它再拉起来。',
+        detail: `PID <span class="mono">${proc.pid}</span>　${esc(proc.exePath || '')}`,
+        confirmLabel: '停止',
+      });
+      if (!ok) return;
+    }
+  }
+  try {
+    const r = await api(`/api/frp/${action}`, { method: 'POST' });
+    toast(`${label}${r.via ? `（${r.via}）` : ''}`, 'ok');
+  } catch (e) {
+    toast(e.message, 'err', 12000);
+  }
+  await frpRefresh();
+}
+
+async function frpSaveProxy() {
+  const val = (k) => { const e = $(`[data-frp="${k}"]`); return e ? e.value.trim() : ''; };
+  const body = {
+    name: val('name'),
+    type: 'tcp',
+    localIP: val('localIP'),
+    localPort: Number(val('localPort')),
+    remotePort: Number(val('remotePort')),
+  };
+  try {
+    await api(`/api/servers/${S.current}/frp`, { method: 'PUT', body });
+    await frpRefresh();
+    toast('隧道已保存', 'ok');
+  } catch (e) {
+    toast(e.message, 'err', 10000);
+  }
+}
+
+async function frpDelProxy() {
+  const name = (S.view.frpSrv && S.view.frpSrv.proxyName) || '';
+  const ok = await confirmDanger({
+    title: '删除隧道',
+    message: '这会从 frpc.toml 里删掉这条隧道，这台服务器随之失去穿透。',
+    detail: `<span class="mono">${esc(name)}</span>`,
+    confirmLabel: '删除',
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/servers/${S.current}/frp`, { method: 'DELETE' });
+    await frpRefresh();
+    toast('隧道已删除', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+/**
+ * FRP 设置弹窗：frpc.toml 顶层的连接参数 + 画折线图用的 frps dashboard。
+ * 所有值随 /api/state 下发，这里不发任何请求——手机经 frp 隧道访问时，
+ * 一次往返就是 200ms 级的卡顿。
+ */
+async function openFrpSettings() {
+  const s = (S.panel && S.panel.frp) || {};
+  const hasToml = !!s.hasToml;
+  const dis = hasToml ? '' : 'disabled';
+
+  const res = await openModal({
+    title: 'FRP 设置',
+    autofocus: false,
+    body: (bodyEl) => {
+      bodyEl.innerHTML = `
+        <div class="field">
+          <label>服务端地址 <span class="muted" style="font-weight:400">serverAddr</span></label>
+          <input class="input mono" data-cfg="serverAddr" value="${esc(s.serverAddr || '')}"
+                 placeholder="你的 frps 域名或 IP" ${dis}>
+        </div>
+        <div class="field">
+          <label>服务端口 <span class="muted" style="font-weight:400">serverPort</span></label>
+          <input class="input mono" type="number" min="1" max="65535" style="width:150px"
+                 data-cfg="serverPort" value="${s.serverPort ?? ''}" ${dis}>
+        </div>
+        <div class="field">
+          <label>认证 token <span class="muted" style="font-weight:400">auth.token</span></label>
+          <input class="input mono" type="password" data-cfg="token" ${dis}
+                 value="${s.hasToken ? '********' : ''}" placeholder="不使用则留空">
+          <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.7">
+            上面三项写进 <span class="mono">frpc.toml</span>。掩码表示保持原值不变。
+          </div>
+        </div>
+
+        <div class="field" style="border-top:1px solid var(--border-soft);padding-top:16px">
+          <label>frps dashboard 地址</label>
+          <input class="input mono" data-cfg="frpsHost" value="${esc(s.host || '')}" placeholder="例如 1.2.3.4">
+        </div>
+        <div class="field">
+          <label>dashboard 端口</label>
+          <input class="input mono" type="number" min="1" max="65535" style="width:150px"
+                 data-cfg="frpsPort" value="${esc(s.port || '')}" placeholder="7500">
+        </div>
+        <div class="row" style="gap:10px">
+          <div class="field" style="margin:0;flex:1">
+            <label>dashboard 账号</label>
+            <input class="input mono" data-cfg="frpsUser" value="${esc(s.user || '')}">
+          </div>
+          <div class="field" style="margin:0;flex:1">
+            <label>dashboard 密码</label>
+            <input class="input mono" type="password" data-cfg="frpsPassword"
+                   value="${s.hasPassword ? '********' : ''}">
+          </div>
+        </div>
+        <div class="muted" style="font-size:12px;line-height:1.7">
+          dashboard 这几项是<b>面板自己</b>的设置，不写进 frpc.toml。frpc 一侧没有字节统计，
+          隧道吞吐只能从服务端的 dashboard 取，所以这里不填就看不到概览页的吞吐折线图。
+        </div>
+        ${hasToml ? '' : '<div class="warn-box" style="margin-top:12px">当前 frp 目录里没有 frpc.toml，上面三项暂时改不了。先去「FRP 管理」选好目录。</div>'}`;
+
+      // 弹窗已经显示出来了，后台再取一次真实值。快照可能是过时的（配置被外部改过），
+      // 拿旧值写回去会覆盖用户的配置。只填用户还没动过的框。
+      api('/api/frp').then((ov) => {
+        if (!ov.settings || !bodyEl.isConnected) return;
+        const n = ov.settings;
+        S.panel = { ...S.panel, frp: n };
+        const fill = (name, oldV, newV) => {
+          const el = bodyEl.querySelector(`[data-cfg="${name}"]`);
+          if (el && el.value === oldV) el.value = newV;
+        };
+        fill('serverAddr', s.serverAddr || '', n.serverAddr || '');
+        fill('serverPort', s.serverPort == null ? '' : String(s.serverPort), n.serverPort == null ? '' : String(n.serverPort));
+        fill('token', s.hasToken ? '********' : '', n.hasToken ? '********' : '');
+        fill('frpsHost', s.host || '', n.host || '');
+        fill('frpsPort', s.port || '', n.port || '');
+        fill('frpsUser', s.user || '', n.user || '');
+        fill('frpsPassword', s.hasPassword ? '********' : '', n.hasPassword ? '********' : '');
+      }).catch(() => {});
+    },
+    actions: [
+      { label: '取消', variant: 'ghost' },
+      {
+        label: '保存',
+        variant: 'primary',
+        value: (bodyEl) => {
+          const g = (k) => { const e = bodyEl.querySelector(`[data-cfg="${k}"]`); return e ? e.value.trim() : ''; };
+          return {
+            serverAddr: g('serverAddr'),
+            serverPort: g('serverPort'),
+            token: g('token'),
+            frpsHost: g('frpsHost'),
+            frpsPort: g('frpsPort'),
+            frpsUser: g('frpsUser'),
+            frpsPassword: g('frpsPassword'),
+          };
+        },
+      },
+    ],
+  });
+  if (!res) return;
+
+  if (hasToml) {
+    try {
+      const r1 = await api('/api/frp/config', {
+        method: 'PATCH',
+        body: { serverAddr: res.serverAddr, serverPort: res.serverPort, token: res.token },
+      });
+      if (r1.frp) S.panel = { ...S.panel, frp: r1.frp };
+    } catch (e) {
+      toast('frpc.toml 没保存成功：' + e.message, 'err', 10000);
+    }
+  }
+  try {
+    const r2 = await api('/api/frp/settings', {
+      method: 'PATCH',
+      body: {
+        frpsHost: res.frpsHost, frpsPort: res.frpsPort,
+        frpsUser: res.frpsUser, frpsPassword: res.frpsPassword,
+      },
+    });
+    if (r2.frp) S.panel = { ...S.panel, frp: r2.frp };
+  } catch (e) {
+    toast('dashboard 设置没保存成功：' + e.message, 'err', 10000);
+  }
+  await frpRefresh();
+  toast('FRP 设置已保存', 'ok');
 }
 
 /* ─────────────────────────── 日志 ─────────────────────────── */
@@ -2559,6 +3244,15 @@ document.addEventListener('click', async (e) => {
       }
       case 'start': case 'stop': case 'restart': case 'kill': return serverAction(a);
       case 'remove-server': return removeServer(el.dataset.id);
+      case 'frp-pick-dir': return frpPickDir();
+      case 'frp-download': return frpDownload();
+      case 'frp-start': return frpProc('start', 'frpc 已启动');
+      case 'frp-stop': return frpProc('stop', 'frpc 已停止');
+      case 'frp-reload': return frpProc('reload', '已请求重载');
+      case 'frp-save-proxy': return frpSaveProxy();
+      case 'frp-del-proxy': return frpDelProxy();
+      case 'frp-open-settings': return openFrpSettings();
+      case 'frp-enable-admin': return frpEnableAdmin();
       case 'reload-detail':
         await loadDetail(S.current);
         renderTab();
