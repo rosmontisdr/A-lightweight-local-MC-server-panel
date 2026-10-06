@@ -2491,30 +2491,34 @@ document.addEventListener('click', async (e) => {
         const r = await api('/api/discover');
         await openModal({
           title: '自动扫描结果',
-          body: r.candidates.length
-            ? `<div class="muted" style="font-size:12.5px;margin-bottom:10px">在常见位置找到 ${r.candidates.length} 个服务器：</div>
-               ${r.candidates.map((c) => `<div class="dir-item" style="cursor:default">
-                 ${fileIcon('dir')}
-                 <div style="flex:1;min-width:0">
-                   <div>${esc(c.name)}</div>
-                   <div class="muted mono" style="font-size:11px;overflow:hidden;text-overflow:ellipsis">${esc(c.dir)}</div>
-                 </div>
-                 <button class="btn btn-sm btn-primary" data-quickadd="${esc(c.dir)}">添加</button>
-               </div>`).join('')}`
-            : '<div class="muted">没有找到现成的服务器目录。可以手动指定路径添加。</div>',
+          // 绑定在弹窗存续期间完成
+          body: (el, close) => {
+            el.innerHTML = r.candidates.length
+              ? `<div class="muted" style="font-size:12.5px;margin-bottom:10px">在常见位置找到 ${r.candidates.length} 个服务器：</div>
+                 ${r.candidates.map((c) => `<div class="dir-item" style="cursor:default">
+                   ${fileIcon('dir')}
+                   <div style="flex:1;min-width:0">
+                     <div>${esc(c.name)}</div>
+                     <div class="muted mono" style="font-size:11px;overflow:hidden;text-overflow:ellipsis">${esc(c.dir)}</div>
+                   </div>
+                   <button class="btn btn-sm btn-primary" data-quickadd="${esc(c.dir)}">添加</button>
+                 </div>`).join('')}`
+              : '<div class="muted">没有找到现成的服务器目录。可以手动指定路径添加。</div>';
+            // 委托挂在 el 上
+            el.addEventListener('click', async (e) => {
+              const b = e.target.closest('[data-quickadd]');
+              if (!b) return;
+              try {
+                const r2 = await api('/api/servers', { method: 'POST', body: { dir: b.dataset.quickadd } });
+                toast(`已添加 ${r2.server.name}`, 'ok');
+                close(null);   // 移除、resolve 并解绑 keydown
+                await loadState();
+                await selectServer(r2.server.id);
+              } catch (err) { toast(err.message, 'err'); }
+            });
+          },
           actions: [{ label: '关闭', value: null }],
           wide: true,
-        });
-        $$('[data-quickadd]').forEach((b) => {
-          b.onclick = async () => {
-            try {
-              const r2 = await api('/api/servers', { method: 'POST', body: { dir: b.dataset.quickadd } });
-              toast(`已添加 ${r2.server.name}`, 'ok');
-              document.querySelector('.modal-back')?.remove();
-              await loadState();
-              await selectServer(r2.server.id);
-            } catch (err) { toast(err.message, 'err'); }
-          };
         });
         return;
       }

@@ -45,10 +45,11 @@ async function main() {
     return 1;
   }
 
-  // 面板已在运行：本次双击意图是打开面板，直接开浏览器，不再派生新进程
+  // 面板已在运行：直接开浏览器，不再派生新进程。
+  // openBrowser 须 await。
   if (await isOurPanel(PORT)) {
     console.log(`面板已经在运行，正在打开浏览器：${URL_}`);
-    openBrowser(URL_);
+    await openBrowser(URL_);
     return 0;
   }
 
