@@ -15,6 +15,8 @@ RS面板
 
 暂时只支持中文和Windows环境
 
+安装包版本可能会滞后压缩包版本一点点
+
 RS panel
 
 This is a super lightweight local Minecraft server management panel.
@@ -31,3 +33,5 @@ or
 download the installer from the release and install it.
 
 only support Chinese and Windows environment now
+
+The installer version might be a little behind the archive version.
