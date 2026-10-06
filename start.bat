@@ -2,7 +2,7 @@
 rem 本文件必须是 GBK（CP936）编码：cmd.exe 按系统 ANSI 代码页逐字节解析，存成 UTF-8 会使中文字节错位、吞掉随后的 ASCII 字符，脚本无法执行。详见 README。
 chcp 936 >nul
 setlocal
-title Minecraft 服务器管理面板
+title RS面板
 cd /d "%~dp0"
 
 where node >nul 2>nul

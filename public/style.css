@@ -894,16 +894,17 @@ a { color: var(--series-mem); }
   .add-server { display: none; }
 }
 
+/* ── 拿不到悬停的环境 ────────────────────────────────────────
+   抽屉形态（窄屏）与触摸设备下，行尾按钮常显并放大到触摸目标尺寸。 */
+@media (max-width: 860px), (pointer: coarse) {
+  .server-act { opacity: 1; width: 40px; height: 40px; }
+  /* right 8 + 2×40 + 间隙 4 + 6 = 98px */
+  .server-item-wrap .server-item { padding-right: 98px; }
+}
+
 /* ── 触摸设备 ────────────────────────────────────────────────
    靠 :hover 显示的控件一律常显。 */
 @media (pointer: coarse) {
-  .server-act {
-    opacity: 1;
-    width: 32px;
-    height: 32px;
-  }
-  .server-item-wrap .server-item { padding-right: 82px; }
-
   /* 触摸点击目标放大到 40px 以上 */
   .btn { padding: 9px 15px; }
   .btn-sm { padding: 7px 11px; }

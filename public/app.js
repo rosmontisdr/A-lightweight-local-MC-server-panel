@@ -1,6 +1,6 @@
 'use strict';
 /* =========================================================================
-   Minecraft 服务器管理面板前端。无框架、无构建步骤，原生 JS + SVG 手绘图表。
+   RS面板前端。无框架、无构建步骤，原生 JS + SVG 手绘图表。
    ========================================================================= */
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -630,7 +630,7 @@ function renderHeader() {
   const st = currentStatus();
   if (!st) {
     // 未选中服务器时抽屉开关更必要。
-    el.innerHTML = `${menuButton()}<div class="server-title"><h1>Minecraft 服务器管理面板</h1></div>`;
+    el.innerHTML = `${menuButton()}<div class="server-title"><h1>RS面板</h1></div>`;
     return;
   }
   const cls = statusClass(st);

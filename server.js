@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Minecraft 服务器管理面板：HTTP 服务 + API 路由
+ * RS面板：HTTP 服务 + API 路由
  * 只监听 127.0.0.1（端口默认 8080，可在「高级设置」改），局域网其他机器无法访问。
  * 零第三方依赖，只用 Node 标准库。
  */
@@ -721,7 +721,7 @@ async function onPortBusy() {
 function onListening() {
   const line = '─'.repeat(58);
   console.log(`\n${line}`);
-  console.log('  Minecraft 服务器管理面板已启动');
+  console.log('  RS面板 已启动');
   console.log(line);
   console.log(`  面板地址   http://localhost:${PORT}`);
   console.log(`  监听范围   ${HOST}（仅本机可访问）`);
