@@ -386,6 +386,13 @@ a { color: var(--series-mem); }
   padding: 16px;
   min-width: 0;
 }
+/* 从别处跳进来时，把要指的那一项闪一下 */
+@keyframes field-flash {
+  0%, 100% { background: transparent; }
+  25% { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+}
+.field.flash { animation: field-flash 1.8s ease; border-radius: 8px; }
+
 /* 手机端（窄屏）不展示 frp 的安装入口，装 frp 是桌面上的活 */
 .is-narrow [data-card="frp-setup"],
 .is-narrow [data-card="frp-install-ctl"] { display: none; }

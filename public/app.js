@@ -840,6 +840,11 @@ function frpCardHTML(st, ov) {
   const job = (ov && ov.download && ov.download.job) || null;
   const box = (inner) => `<div class="empty" style="padding:18px 8px;line-height:1.8">${inner}</div>`;
   const btn = (label, attrs, wrapAttrs) => `<div style="margin-top:12px" ${wrapAttrs || ''}><button class="btn btn-sm" ${attrs}>${label}</button></div>`;
+  // 装 frp 是桌面上的活，这一组在窄屏下整体隐藏（见 style.css 的 is-narrow 规则）
+  const installBtns = `<div style="margin-top:12px" data-card="frp-install-ctl">
+      <button class="btn btn-sm btn-primary" data-action="frp-download">一键下载</button>
+      <button class="btn btn-sm" data-action="frp-custom-dir" style="margin-left:8px">自定义 frp 目录</button>
+    </div>`;
 
   switch (frpCardState(st, ov)) {
     case 'downloading':
@@ -847,10 +852,10 @@ function frpCardHTML(st, ov) {
         <div class="meter" style="margin-top:10px"><i style="width:${job.percent || 0}%"></i></div>
         <div class="muted" style="font-size:12px">${esc(job.phase || '')}${job.total ? ` · ${fmtBytes(job.received)} / ${fmtBytes(job.total)}` : ''}</div>`);
     case 'dl-error':
-      return box(`未安装frpc${btn('一键下载', 'data-action="frp-download"', 'data-card="frp-install-ctl"')}
+      return box(`未安装frpc${installBtns}
         <div class="danger-box" style="margin-top:10px">${esc(job.error)}</div>`);
     case 'no-frpc':
-      return box(`未安装frpc${btn('一键下载', 'data-action="frp-download"', 'data-card="frp-install-ctl"')}`);
+      return box(`未安装frpc${installBtns}`);
     case 'no-tunnel':
       return box('未配置隧道' + btn('去 FRP 管理', 'data-action="tab" data-tab="frp"'));
     case 'no-traffic':
@@ -1801,7 +1806,8 @@ function tokenizeArgs(str) {
 }
 
 /** 面板自身设置：端口、明暗模式、主题色 */
-async function openPanelSettings() {
+/** @param {{flash?:string}} [opts] flash 为要闪一下的 [data-card] 名，用来指认「就是这一项」 */
+async function openPanelSettings(opts = {}) {
   const p = S.panel || {};
   const curTheme = document.documentElement.dataset.theme || 'dark';
   const curAccent = localStorage.getItem('mcpanel-accent') || 'green';
@@ -1957,6 +1963,15 @@ async function openPanelSettings() {
           toast(e.message, 'err');
         }
       };
+
+      // 从别处跳进来时，把要指的那一项闪一下
+      if (opts.flash) {
+        const el = bodyEl.querySelector(`[data-card="${opts.flash}"]`);
+        if (el) {
+          el.classList.add('flash');
+          setTimeout(() => el.classList.remove('flash'), 1800);
+        }
+      }
     },
     actions: [
       { label: '取消', variant: 'ghost' },
@@ -2059,7 +2074,8 @@ function gotoPanel(target, timeout = 30000) {
         const j = await res.json();
         if (!j.panel || j.panel.pid === oldPid) throw new Error('仍是旧进程');
       }
-      location.href = url;
+      // 用 replace 不改写历史：标签页的历史长度保持 1，之后才关得掉自己
+      location.replace(url);
     } catch {
       setTimeout(tick, 400);
     }
@@ -2391,7 +2407,9 @@ async function renderFrp(content, st) {
       <div class="card">
         <div class="card-head">
           <div class="card-title">frpc 进程</div>
-          <div class="card-sub">${proc.running ? `PID ${proc.pid}${proc.how === 'foreign' ? '（不是面板启动的）' : ''}` : '未运行'}</div>
+          <div class="card-sub">${proc.running
+            ? `PID ${proc.pid}${proc.how === 'tray' ? '（frpc-tray 托管）' : proc.how === 'foreign' ? '（不是面板启动的）' : ''}`
+            : '未运行'}</div>
         </div>
         <div class="field">
           <div class="row" style="flex-wrap:wrap">
@@ -2520,11 +2538,53 @@ async function frpPickDir() {
   }
 }
 
+/** 一键安装：先让用户选装官方 frpc 还是懒人 frpc */
 async function frpDownload() {
+  const f = (S.panel || {}).frp || {};
+  const list = (f.sources && f.sources.length) ? f.sources : [
+    { id: 'official', label: '官方 frpc' },
+    { id: 'lazy', label: '懒人 frpc', note: '开箱即用，推荐', recommend: true },
+  ];
+  const noteOf = (id) => ((list.find((x) => x.id === id) || {}).note || '');
+  const pick = list.some((x) => x.id === f.source) ? f.source : (list.find((x) => x.recommend) || list[0]).id;
+
+  const res = await openModal({
+    title: '下载 frp',
+    autofocus: false,
+    body: (bodyEl) => {
+      bodyEl.innerHTML = `
+        <div class="field" style="margin-bottom:0">
+          <label>选择要安装的版本</label>
+          <div class="seg" data-src>
+            ${list.map((x) => `<button type="button" data-src-opt="${esc(x.id)}" class="${x.id === pick ? 'on' : ''}">${esc(x.label)}${x.recommend ? ' <span class="tag">更推荐</span>' : ''}</button>`).join('')}
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:8px;line-height:1.6" data-src-note>${esc(noteOf(pick))}</div>
+        </div>`;
+      bodyEl.querySelector('[data-src]').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-src-opt]');
+        if (!b) return;
+        for (const x of bodyEl.querySelectorAll('[data-src-opt]')) x.classList.toggle('on', x === b);
+        bodyEl.querySelector('[data-src-note]').textContent = noteOf(b.dataset.srcOpt);
+      });
+    },
+    actions: [
+      { label: '取消', variant: 'ghost' },
+      {
+        label: '开始下载',
+        variant: 'primary',
+        value: (bodyEl) => {
+          const on = bodyEl.querySelector('[data-src-opt].on');
+          return on ? on.dataset.srcOpt : pick;
+        },
+      },
+    ],
+  });
+  if (!res) return;
+
   try {
-    await api('/api/frp/download', { method: 'POST', body: {} });
+    await api('/api/frp/download', { method: 'POST', body: { source: res } });
   } catch (e) {
-    return toast(e.message, 'err', 10000);
+    return toast(e.message, 'err', 12000);
   }
   S.view.frpOv = null;
   if (S.tab === 'overview') renderTab();
@@ -2899,6 +2959,47 @@ async function selectServer(id) {
   }
 }
 
+/* ─────────────────────────── 页面心跳（长轮询） ─────────────────────────── */
+
+/**
+ * 把心跳请求一直挂在面板上，挂着就代表「这个页面在看面板」。
+ * 双击 start.bat 或点托盘时，面板会顺着这条挂着的请求让旧标签页自己关掉，再开一个新的
+ * ——浏览器没法把已有的标签页切到前台，只能关掉重开。
+ */
+let titleTimer = null;
+
+function closeSelf() {
+  window.close();
+  // 浏览器只允许「历史只有一条」的标签页自关；关不掉就退而求其次，闪标题让人找得到
+  setTimeout(() => {
+    if (window.closed) return;
+    const orig = document.title;
+    if (titleTimer) clearInterval(titleTimer);
+    let on = true;
+    let n = 0;
+    titleTimer = setInterval(() => {
+      document.title = on ? '● ' + orig : orig;
+      on = !on;
+      if (++n > 9) { clearInterval(titleTimer); titleTimer = null; document.title = orig; }
+    }, 350);
+    toast('这个标签页关不掉，请手动关闭', 'warn', 6000);
+  }, 800);
+}
+
+async function holdPing() {
+  for (;;) {
+    let r = null;
+    try {
+      r = await api('/api/panel/ping');
+    } catch {}
+    if (r && r.close) { closeSelf(); return; }
+    // 断开时快点重挂，免得面板以为没人在看
+    if (!r) await new Promise((res) => setTimeout(res, 1200));
+  }
+}
+
+holdPing();
+
 /* ─────────────────────────── SSE ─────────────────────────── */
 
 /** 连接该服务器的 SSE；已连上则复用。返回是否新建了连接。 */
@@ -3206,6 +3307,7 @@ document.addEventListener('click', async (e) => {
       case 'panel-restart': return restartPanel();
       case 'panel-shutdown': return shutdownPanel();
       case 'panel-settings': return openPanelSettings();
+      case 'frp-custom-dir': return openPanelSettings({ flash: 'frp-setup' });
       case 'add-server': return addServerFlow();
       case 'discover': {
         const r = await api('/api/discover');

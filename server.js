@@ -28,6 +28,16 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // SSE 连接时首发的历史行数，与 public/app.js 控制台的渲染窗口同宽。
 const SSE_LOG_BACKLOG = 1200;
 
+// 页面心跳用长轮询：页面把这条请求挂着，挂着就说明有页面在看面板。
+// 挂着的请求也让面板能立刻给它下指令（关闭自己），不必等下一次心跳。
+const PAGE_HOLD_MS = 20000;
+const pageWaiters = new Set();
+
+/** 给所有挂着的页面下发一条指令 */
+function tellPages(payload) {
+  for (const done of [...pageWaiters]) done(payload);
+}
+
 // 面板由 launch.js 以脱离控制台的方式拉起，需自落日志文件。
 // 「格式化面板」也要用 LOG_FILE。
 const panellog = require('./lib/panellog');
@@ -193,6 +203,37 @@ async function route(req, res, url) {
     return sendJson(res, 200, panelInfo());
   }
 
+  // 页面长轮询：页面挂着这条请求，挂着就代表「有页面在看面板」
+  if (p === '/api/panel/ping' && m === 'GET') {
+    let settled = false;
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      pageWaiters.delete(done);
+      try { sendJson(res, 200, payload); } catch {}
+    };
+    const timer = setTimeout(() => done({ ok: true, close: false }), PAGE_HOLD_MS);
+    pageWaiters.add(done);
+    const bye = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      pageWaiters.delete(done);
+    };
+    req.on('close', bye);
+    req.on('error', bye);
+    return;
+  }
+
+  // 「把面板显示出来」：有页面挂着就让它们自己关掉，调用方随后开一个新的
+  // （浏览器没法把已有的标签页切到前台，只能关掉重开）
+  if (p === '/api/panel/show' && m === 'GET') {
+    const page = pageWaiters.size > 0;
+    if (page) tellPages({ ok: true, close: true });
+    return sendJson(res, 200, { page });
+  }
+
   if (p === '/api/panel/settings' && m === 'PATCH') {
     const body = await readJson(req);
     const out = {};
@@ -310,7 +351,7 @@ async function route(req, res, url) {
   // frpc.toml 顶层的 serverAddr / serverPort / auth.token
   if (p === '/api/frp/config' && m === 'PATCH') {
     const body = await readJson(req);
-    const r = frp.writeTop(body);
+    const r = await frp.writeTop(body);
     return sendJson(res, 200, { ok: true, ...r, frp: frp.settingsSummary() });
   }
 
@@ -337,33 +378,38 @@ async function route(req, res, url) {
 
   if (p === '/api/frp/download' && m === 'POST') {
     const body = await readJson(req);
+    const set = frp.getSettings();
+    const source = body.source || set.source;
+    if (body.source) frp.patchSettings({ source });   // 选了就记住，哪怕这次被挡下
+
     // 安装会覆盖 frpc.exe；有 frpc 在跑时既会锁文件，也等于在运行的进程底下换二进制
     const st0 = await frp.processState();
     if (st0.running) {
       throw new Error(`已有 frpc 在运行（PID ${st0.pid}），面板不会去动它。请先停止它再安装。`);
     }
     const job = frpinstall.startDownload({
-      mirror: frp.getSettings().mirror,
-      version: body.version || frp.getSettings().version,
+      mirror: set.mirror,
+      version: body.version || set.version,
       frpDir: body.dir || frp.resolveDir(),
+      source,
     });
     return sendJson(res, 200, { ok: true, job });
   }
 
   if (p === '/api/frp/proxies' && m === 'POST') {
     const body = await readJson(req);
-    const proxy = frp.createProxy(body, body.serverId || null);
+    const proxy = await frp.createProxy(body, body.serverId || null);
     return sendJson(res, 200, { ok: true, proxy });
   }
 
   const fpm = p.match(/^\/api\/frp\/proxies\/([^/]+)$/);
   if (fpm && m === 'PATCH') {
     const body = await readJson(req);
-    const r = frp.updateProxy(decodeURIComponent(fpm[1]), body, body.serverId || null);
+    const r = await frp.updateProxy(decodeURIComponent(fpm[1]), body, body.serverId || null);
     return sendJson(res, 200, { ok: true, ...r });
   }
   if (fpm && m === 'DELETE') {
-    frp.removeProxy(decodeURIComponent(fpm[1]));
+    await frp.removeProxy(decodeURIComponent(fpm[1]));
     return sendJson(res, 200, { ok: true });
   }
 
@@ -382,15 +428,15 @@ async function route(req, res, url) {
     const body = await readJson(req);
     // 已有关联（含按端口推断出来的）就地改，没有才新建
     const cur = frp.associationFor(server.id).proxy;
-    if (cur) frp.updateProxy(cur.name, body, server.id);
-    else frp.createProxy(body, server.id);
+    if (cur) await frp.updateProxy(cur.name, body, server.id);
+    else await frp.createProxy(body, server.id);
     return sendJson(res, 200, await frp.serverFrp(server.id));
   }
 
   if (sub === '/frp' && m === 'DELETE') {
     const { proxy } = frp.associationFor(server.id);
     if (!proxy) throw new Error('这台服务器还没有关联隧道');
-    frp.removeProxy(proxy.name);
+    await frp.removeProxy(proxy.name);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -852,8 +898,16 @@ function onListening() {
 
   // 仅由 launch.js 设置。重启不经此处，浏览器那一侧会自己切过去。
   if (process.env.MCPANEL_OPEN === '1' && !RESTARTING) {
-    console.log(`  已在浏览器中打开 http://localhost:${PORT}\n`);
-    openBrowser(`http://localhost:${PORT}`);
+    // 等一会儿：面板刚重启时，上一次那个标签页会立刻重挂长轮询，认出它就先关掉，免得留下两个
+    setTimeout(() => {
+      if (pageWaiters.size) {
+        tellPages({ ok: true, close: true });
+        console.log('  已让原来的面板标签页关闭，正在打开新的\n');
+      } else {
+        console.log(`  已在浏览器中打开 http://localhost:${PORT}\n`);
+      }
+      openBrowser(`http://localhost:${PORT}`);
+    }, 1500);
   }
 }
 

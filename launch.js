@@ -7,16 +7,19 @@
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const { Store } = require('./lib/store');
-const { resolvePort, openBrowser, isOurPanel } = require('./lib/panelcfg');
+const { resolvePort, openBrowser, isOurPanel, askShow } = require('./lib/panelcfg');
 const { LOG_FILE } = require('./lib/panellog');
 
 const PORT = resolvePort(new Store());
 const URL_ = `http://localhost:${PORT}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 页面收到关闭指令后，实测浏览器拆掉那个标签页只要 39ms；留三倍余量
+const SWITCH_MS = 150;
 
 /** 端口是否有进程监听（不区分监听者）。 */
 function portBusy(port) {
@@ -27,6 +30,36 @@ function portBusy(port) {
     sock.once('error', () => done(false));
     sock.setTimeout(800, () => done(false));
   });
+}
+
+/**
+ * 托盘图标是否已经在跑。
+ * 必须排除本进程：查进程用的 powershell 自己命令行里也含 tray.ps1，不排会永远算作「已在跑」。
+ */
+function trayRunning() {
+  try {
+    const out = execFileSync('powershell', ['-NoProfile', '-Command',
+      `@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*tray.ps1*' -and $_.ProcessId -ne $PID }).Count`],
+      { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    return Number(String(out).trim()) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 拉起托盘图标；已在跑就什么都不做。
+ * 经 wscript + tray.vbs 转一手：powershell 直接以 detached 起会立刻退出（实测），
+ * 不 detached 又会在本进程退出时被带走；wscript 没有控制台，也不闪黑框。
+ */
+function startTray() {
+  if (trayRunning()) return;
+  try {
+    const child = spawn('wscript.exe', [
+      '//B', '//Nologo', path.join(__dirname, 'tray.vbs'), String(PORT),
+    ], { cwd: __dirname, detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch { }
 }
 
 function tail(file, n) {
@@ -44,10 +77,17 @@ async function main() {
     return 1;
   }
 
-  // 面板已在运行：直接开浏览器，不再派生新进程。
-  // openBrowser 须 await。
+  // 面板已在运行：不再派生新进程。已经有页面在看面板时，让那个页面自己关掉，
+  // 再开一个新的（浏览器没法把已有的标签页切到前台，只能关掉重开）。openBrowser 须 await。
   if (await isOurPanel(PORT)) {
-    console.log(`面板已经在运行，正在打开浏览器：${URL_}`);
+    console.log(`面板已经在运行：${URL_}`);
+    startTray();
+    if ((await askShow(PORT)).page) {
+      console.log('已让原来的面板标签页关闭，正在打开新的…');
+      await sleep(SWITCH_MS);
+    } else {
+      console.log('正在打开浏览器…');
+    }
     await openBrowser(URL_);
     return 0;
   }
@@ -66,6 +106,7 @@ async function main() {
     if (await isOurPanel(PORT)) {
       console.log(`面板已启动：${URL_}`);
       console.log('本窗口会在几秒后自动关闭，关闭后不影响面板运行。');
+      startTray();
       return 0;
     }
   }

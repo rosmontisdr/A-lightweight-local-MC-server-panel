@@ -34,7 +34,4 @@ if not "%CODE%"=="0" (
   pause
   exit /b %CODE%
 )
-
-rem 留两秒显示地址，随后窗口自动关闭；面板已脱离本窗口在后台运行，关闭窗口不影响它。
-timeout /t 2 /nobreak >nul 2>nul
 exit /b 0
