@@ -9,10 +9,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
 
-/**
- * 服务端类型的显示名。必须覆盖 launcher.js 的 JAR_RULES / detect() 可能返回的全部
- * type，缺一项界面就会把内部标识直接漏出去（如「服务端：neoforge」）。
- */
+
 const TYPE_LABEL = {
   forge: 'Forge', neoforge: 'NeoForge', fabric: 'Fabric', quilt: 'Quilt',
   paper: 'Paper', spigot: 'Spigot', purpur: 'Purpur',
@@ -58,8 +55,6 @@ function applyViewportClasses() {
   const root = document.documentElement;
   root.classList.toggle('is-narrow', NARROW.matches);
   root.classList.toggle('is-touch', TOUCH.matches);
-  // 变宽回桌面布局时必须收掉抽屉，否则 .nav-open 和 body 滚动锁定会残留，
-  // 之后再缩窄抽屉是开着的。
   if (!NARROW.matches) toggleSidebar(false);
 }
 
