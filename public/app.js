@@ -974,7 +974,7 @@ function renderConsole(content, st) {
     ? `面板重启过，已失去这台服务器的控制台通道（Windows 不允许重新接上别的进程的 stdin）。服务器仍在运行，下面的日志来自 logs/latest.log。
        想要发送指令，请在 server.properties 中设置 <b>enable-rcon=true</b> 与 <b>rcon.password=一个密码</b>，重启服务器后即可；要立即关服请用「强制结束」。`
     : `这台服务器不是由面板启动的，面板无法直接向它的控制台发送指令。
-       下面的日志来自 logs/latest.log（仅显示打开面板之后的新增内容）。
+       下面的日志来自 logs/latest.log（含末尾一段历史，其后新增的内容会继续接上）。
        想要发送指令，请在 server.properties 中设置 <b>enable-rcon=true</b> 与 <b>rcon.password=一个密码</b>，重启服务器后即可。`;
   content.innerHTML = `
     ${controllable ? '' : `<div class="console-hint">⚠ ${noConsoleHint}</div>`}
@@ -994,6 +994,7 @@ function renderConsole(content, st) {
 
   const body = $('#consoleBody');
   body.innerHTML = '';
+  // 渲染窗口与 server.js 的 SSE_LOG_BACKLOG 同宽
   for (const l of S.logs.slice(-1200)) body.appendChild(logNode(l));
   scrollConsole(true);
 
@@ -2191,13 +2192,15 @@ async function loadDetail(id) {
 async function selectServer(id) {
   S.current = id;
   S.tab = 'overview';
-  S.logs = [];
-  S.lastLogN = 0;
   S.filePath = '';
   S.openLog = null;
   // 各标签页缓存都在 S.view，清空它即可
   S.view = {};
-  connectSse(id);
+  // 复用已有 SSE 连接时保留日志缓冲
+  if (connectSse(id)) {
+    S.logs = [];
+    S.lastLogN = 0;
+  }
   renderSidebar();
   renderHeader();
   renderTabs();
@@ -2213,8 +2216,10 @@ async function selectServer(id) {
 
 /* ─────────────────────────── SSE ─────────────────────────── */
 
+/** 连接该服务器的 SSE；已连上则复用。返回是否新建了连接。 */
 function connectSse(id) {
-  if (S.sse && S.sseServer === id) return;
+  // 已放弃的流不能复用
+  if (S.sse && S.sseServer === id && S.sse.readyState !== EventSource.CLOSED) return false;
   if (S.sse) { S.sse.close(); S.sse = null; }
   S.sseServer = id;
   const es = new EventSource(`/api/servers/${id}/stream`);
@@ -2268,6 +2273,7 @@ function connectSse(id) {
   es.onerror = () => {
     // EventSource 会自行重连，面板重启后自动恢复
   };
+  return true;
 }
 
 /* ─────────────────────────── 动作 ─────────────────────────── */

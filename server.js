@@ -23,6 +23,9 @@ const { HOST, DEFAULT_PORT, normalizePort, resolvePort, openBrowser, isOurPanel 
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+// SSE 连接时首发的历史行数，与 public/app.js 控制台的渲染窗口同宽。
+const SSE_LOG_BACKLOG = 1200;
+
 // 面板由 launch.js 以脱离控制台的方式拉起，需自落日志文件。
 // 「格式化面板」也要用 LOG_FILE。
 const panellog = require('./lib/panellog');
@@ -382,7 +385,7 @@ async function route(req, res, url) {
       try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {}
     };
     send({ type: 'status', data: server.status });
-    send({ type: 'logs', data: server.logs.slice(-500), last: server.logSeq });
+    send({ type: 'logs', data: server.logs.slice(-SSE_LOG_BACKLOG), last: server.logSeq });
     const unsub = server.subscribe(send);
     const ka = setInterval(() => { try { res.write(': keepalive\n\n'); } catch {} }, 15000);
     const close = () => { clearInterval(ka); unsub(); try { res.end(); } catch {} };
