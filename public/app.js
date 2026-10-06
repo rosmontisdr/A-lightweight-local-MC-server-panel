@@ -9,7 +9,10 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC_MAP[c]);
 
-
+/**
+ * 服务端类型的显示名。必须覆盖 launcher.js 的 JAR_RULES / detect() 可能返回的全部
+ * type，缺一项界面就会把内部标识直接漏出去（如「服务端：neoforge」）。
+ */
 const TYPE_LABEL = {
   forge: 'Forge', neoforge: 'NeoForge', fabric: 'Fabric', quilt: 'Quilt',
   paper: 'Paper', spigot: 'Spigot', purpur: 'Purpur',
@@ -41,6 +44,7 @@ const S = {
   autoScroll: true,
   busy: new Set(),
   navOpen: false,    // 窄屏下的服务器列表抽屉是否打开
+  sidebarIds: null,  // 侧边栏当前渲染出的服务器 id 顺序
   view: {},          // 当前标签页的 DOM 引用
 };
 
@@ -55,6 +59,8 @@ function applyViewportClasses() {
   const root = document.documentElement;
   root.classList.toggle('is-narrow', NARROW.matches);
   root.classList.toggle('is-touch', TOUCH.matches);
+  // 变宽回桌面布局时必须收掉抽屉，否则 .nav-open 和 body 滚动锁定会残留，
+  // 之后再缩窄抽屉是开着的。
   if (!NARROW.matches) toggleSidebar(false);
 }
 
@@ -522,37 +528,71 @@ function recordHistory(st) {
 
 /* ─────────────────────────── 渲染：外壳 ─────────────────────────── */
 
+/** 侧边栏行的副标题文案。 */
+function serverMeta(st) {
+  if (st.running) return `${st.players.online}/${st.players.max} 人 · ${Math.round(st.cpu || 0)}%`;
+  return st.port ? `端口 ${st.port}` : '已停止';
+}
+
+function serverRowHTML(st) {
+  // 行尾图标按钮置于 .server-item 之外的定位层，悬停整行时浮在右侧。
+  return `<div class="server-item-wrap" data-row="${esc(st.id)}">
+      <button class="server-item ${st.id === S.current ? 'active' : ''}" data-action="select-server" data-id="${esc(st.id)}">
+        <span class="status-dot ${statusClass(st)}"></span>
+        <span class="server-item-body">
+          <span class="server-item-name">${esc(st.name)}</span>
+          <span class="server-item-meta">${esc(serverMeta(st))}</span>
+        </span>
+      </button>
+      <div class="server-acts">
+        <button class="server-act" data-action="rename-server" data-id="${esc(st.id)}"
+                title="重命名（只改面板里的显示名）" aria-label="重命名服务器">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11.5 2.5l2 2-8 8-2.5.5.5-2.5z"/><path d="M10 4l2 2"/>
+          </svg>
+        </button>
+        <button class="server-act danger" data-action="remove-server" data-id="${esc(st.id)}"
+                title="从面板移除（磁盘文件不动）" aria-label="移除服务器">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 4.5h11"/>
+            <path d="M6.8 4.5V3.2a1 1 0 0 1 1-1h.4a1 1 0 0 1 1 1v1.3"/>
+            <path d="M4.2 4.5v8.3a1.5 1.5 0 0 0 1.5 1.5h4.6a1.5 1.5 0 0 0 1.5-1.5V4.5"/>
+            <path d="M6.8 7.3v4.1M9.2 7.3v4.1"/>
+          </svg>
+        </button>
+      </div>
+    </div>`;
+}
+
+/** 行集合未变时就地改文案与状态类。 */
+function patchSidebar(list) {
+  for (const st of S.servers) {
+    const row = list.querySelector(`[data-row="${st.id}"]`);
+    if (!row) return false;
+    row.querySelector('.server-item').classList.toggle('active', st.id === S.current);
+    row.querySelector('.status-dot').className = `status-dot ${statusClass(st)}`;
+    row.querySelector('.server-item-name').textContent = st.name;
+    row.querySelector('.server-item-meta').textContent = serverMeta(st);
+  }
+  return true;
+}
+
 function renderSidebar() {
   const list = $('#serverList');
   if (!S.servers.length) {
     list.innerHTML = `<div class="muted" style="padding:10px 12px;font-size:12.5px;line-height:1.7">
       还没有添加服务器。<br>点下面的按钮开始。</div>`;
+    S.sidebarIds = null;
     return;
   }
-  list.innerHTML = S.servers.map((st) => {
-    const cls = statusClass(st);
-    const meta = st.running
-      ? `${st.players.online}/${st.players.max} 人 · ${Math.round(st.cpu || 0)}%`
-      : (st.port ? `端口 ${st.port}` : '已停止');
-    // 重命名按钮不能放进 .server-item：那是 <button>，按钮套按钮非法，浏览器会拆出内层。
-    // 故外层加一个定位 div，铅笔按钮悬停时浮在右侧。
-    return `<div class="server-item-wrap">
-      <button class="server-item ${st.id === S.current ? 'active' : ''}" data-action="select-server" data-id="${esc(st.id)}">
-        <span class="status-dot ${cls}"></span>
-        <span class="server-item-body">
-          <span class="server-item-name">${esc(st.name)}</span>
-          <span class="server-item-meta">${esc(meta)}</span>
-        </span>
-      </button>
-      <button class="server-rename" data-action="rename-server" data-id="${esc(st.id)}"
-              title="重命名（只改面板里的显示名）" aria-label="重命名服务器">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M11.5 2.5l2 2-8 8-2.5.5.5-2.5z"/><path d="M10 4l2 2"/>
-        </svg>
-      </button>
-    </div>`;
-  }).join('');
+  const ids = S.servers.map((s) => s.id);
+  const sameSet = S.sidebarIds && ids.length === S.sidebarIds.length
+    && ids.every((id, i) => id === S.sidebarIds[i]);
+  if (sameSet && patchSidebar(list)) return;
+  list.innerHTML = S.servers.map(serverRowHTML).join('');
+  S.sidebarIds = ids;
 }
 
 /** 重命名侧边栏服务器。只改 panel.json 的 name 字段，不触碰服务器目录与启动配置。 */
@@ -2430,8 +2470,10 @@ async function serverAction(action) {
   }
 }
 
-async function removeServer() {
-  const st = currentStatus();
+/** 从面板移除服务器；id 省略时作用于当前选中项。 */
+async function removeServer(id = S.current) {
+  const st = (S.servers || []).find((s) => s.id === id);
+  if (!st) return;
   const ok = await confirmDanger({
     title: '从面板移除服务器',
     message: '只会把服务器从面板列表里移除，磁盘上的文件一个都不会动。',
@@ -2440,14 +2482,18 @@ async function removeServer() {
   });
   if (!ok) return;
   try {
-    await api(`/api/servers/${S.current}`, { method: 'DELETE' });
-    S.current = null;
-    S.detail = null;
-    if (S.sse) { S.sse.close(); S.sse = null; S.sseServer = null; }
-    await loadState();
-    if (S.servers.length) await selectServer(S.servers[0].id);
-    else { renderTab(); }
+    await api(`/api/servers/${id}`, { method: 'DELETE' });
     toast('已移除', 'ok');
+    if (id === S.current) {
+      S.current = null;
+      S.detail = null;
+      if (S.sse) { S.sse.close(); S.sse = null; S.sseServer = null; }
+      await loadState();
+      if (S.servers.length) await selectServer(S.servers[0].id);
+      else renderTab();
+    } else {
+      await loadState();
+    }
   } catch (e) {
     toast(e.message, 'err');
   }
@@ -2469,7 +2515,7 @@ document.addEventListener('click', async (e) => {
     switch (a) {
       case 'toggle-sidebar': return toggleSidebar();
       case 'select-server': return selectServer(el.dataset.id);
-      // 铅笔是 .server-item 的兄弟节点而非子节点，点它 closest() 命中铅笔本身，
+      // 行尾图标按钮是 .server-item 的兄弟节点而非子节点，点它 closest() 命中按钮本身，
       // 不会误触发 select-server，无需拦截事件。
       case 'rename-server': return renameServer(el.dataset.id);
       case 'tab':
@@ -2518,7 +2564,7 @@ document.addEventListener('click', async (e) => {
         return;
       }
       case 'start': case 'stop': case 'restart': case 'kill': return serverAction(a);
-      case 'remove-server': return removeServer();
+      case 'remove-server': return removeServer(el.dataset.id);
       case 'reload-detail':
         await loadDetail(S.current);
         renderTab();

@@ -124,15 +124,20 @@ a { color: var(--series-mem); }
 
 .server-list { flex: 1; overflow-y: auto; padding: 0 8px; min-height: 0; }
 
-/* 侧边栏行容器：.server-item 与悬停显示的重命名按钮。按钮不能嵌套于 <button>（HTML 非法），本层仅负责定位。 */
+/* 侧边栏行容器：.server-item 与悬停显示的图标按钮，本层负责定位。 */
 .server-item-wrap { position: relative; }
-/* 为右侧重命名按钮预留空间：right 8 + 宽 24 = 32px，另留 6px 间隙 */
-.server-item-wrap .server-item { padding-right: 38px; }
-.server-rename {
+/* 右侧两个图标按钮占位 66px */
+.server-item-wrap .server-item { padding-right: 66px; }
+
+.server-acts {
   position: absolute;
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+}
+.server-act {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -147,14 +152,19 @@ a { color: var(--series-mem); }
   opacity: 0;
   transition: opacity .12s, background .12s, color .12s, border-color .12s;
 }
-.server-item-wrap:hover .server-rename,
-.server-item-wrap:focus-within .server-rename { opacity: 1; }
-.server-rename:hover {
+.server-item-wrap:hover .server-act,
+.server-item-wrap:focus-within .server-act { opacity: 1; }
+.server-act:hover {
   background: var(--surface);
   border-color: var(--border);
   color: var(--ink-1);
 }
-.server-rename:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+.server-act.danger:hover {
+  color: var(--critical);
+  border-color: color-mix(in srgb, var(--critical) 35%, transparent);
+  background: color-mix(in srgb, var(--critical) 14%, transparent);
+}
+.server-act:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .server-item {
   display: flex;
@@ -885,14 +895,14 @@ a { color: var(--series-mem); }
 }
 
 /* ── 触摸设备 ────────────────────────────────────────────────
-   触摸无 hover，靠 :hover 显示的控件在触摸设备上不可用（如重命名按钮），一律改为常显。 */
+   靠 :hover 显示的控件一律常显。 */
 @media (pointer: coarse) {
-  .server-rename {
+  .server-act {
     opacity: 1;
     width: 32px;
     height: 32px;
   }
-  .server-item-wrap .server-item { padding-right: 46px; }
+  .server-item-wrap .server-item { padding-right: 82px; }
 
   /* 触摸点击目标放大到 40px 以上 */
   .btn { padding: 9px 15px; }
