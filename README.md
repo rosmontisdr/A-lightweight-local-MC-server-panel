@@ -1,3 +1,4 @@
+RS面板
 这是一个极其轻量化的本地mc服务器管理面板
 
 零依赖，仅使用 Node.js 标准库，支持主流模组加载器，对移动端网页适配极好
@@ -12,6 +13,8 @@
 下载release中的安装包安装
 
 暂时只支持中文
+
+RS panel
 
 This is a super lightweight local Minecraft server management panel.
 
