@@ -38,6 +38,28 @@ function tellPages(payload) {
   for (const done of [...pageWaiters]) done(payload);
 }
 
+// 关闭面板时留下的哨兵文件，托盘图标据此立即退出。
+// 重启不写，托盘陪着面板换代。
+const STOP_FILE = path.join(DATA_DIR, 'panel.stopping');
+let stopping = false;
+try { fs.rmSync(STOP_FILE, { force: true }); } catch {}
+
+process.on('exit', () => {
+  if (!stopping) return;
+  try { fs.writeFileSync(STOP_FILE, String(Date.now())); } catch {}
+});
+
+/** 本地转发口随面板一起停，指向它们的隧道随之断开 */
+function warnTaps() {
+  let taps = [];
+  try { taps = frp.runningTaps(); } catch { }
+  if (!taps.length) return;
+  console.log('[面板] 以下本地转发口会随面板关闭而停止，指向它们的隧道将断开：');
+  for (const t of taps) {
+    console.log(`       · ${t.name}  127.0.0.1:${t.listenPort} → 127.0.0.1:${t.targetPort}`);
+  }
+}
+
 // 面板由 launch.js 以脱离控制台的方式拉起，需自落日志文件。
 // 「格式化面板」也要用 LOG_FILE。
 const panellog = require('./lib/panellog');
@@ -270,7 +292,11 @@ async function route(req, res, url) {
 
   if (p === '/api/panel/shutdown' && m === 'POST') {
     sendJson(res, 200, { ok: true });
+    // 让在看面板的标签页自己关掉，托盘图标随哨兵文件一起退出
+    tellPages({ ok: true, close: true });
+    warnTaps();
     // 面板退出不会关闭 Minecraft 服务器进程，与点窗口 X 一致
+    stopping = true;
     setTimeout(() => process.exit(0), 300);
     return;
   }
@@ -444,6 +470,16 @@ async function route(req, res, url) {
   if (sub === '/frp/attach' && m === 'POST') {
     const body = await readJson(req);
     return sendJson(res, 200, { ok: true, ...frp.attach(server.id, body.name || null) });
+  }
+
+  // 本地转发计数：面板自己监听并转发，绕开 frps「连接关闭才结算」。
+  // 开关一次就把全部流程走完——起/停监听口、改隧道 localPort、重启 frpc。
+  if (sub === '/frp/tap' && m === 'POST') {
+    return sendJson(res, 200, { ok: true, ...(await frp.enableTap(server.id)) });
+  }
+
+  if (sub === '/frp/tap' && m === 'DELETE') {
+    return sendJson(res, 200, { ok: true, ...(await frp.disableTap(server.id)) });
   }
 
   if (sub === '' && m === 'GET') {
@@ -923,5 +959,7 @@ process.on('SIGINT', () => {
     if (frpRec && frpRec.pid) console.log(`       · frpc (PID ${frpRec.pid})`);
     console.log('[面板] 如需一并停止，请在面板里点「停止」，或稍后手动结束这些 PID。');
   }
+  warnTaps();
+  stopping = true;
   process.exit(0);
 });

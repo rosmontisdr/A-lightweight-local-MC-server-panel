@@ -1,6 +1,6 @@
 {
   "name": "mcpanel",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "RS面板 - Minecraft 服务器本地管理面板，零依赖",
   "main": "server.js",

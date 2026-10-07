@@ -393,6 +393,23 @@ a { color: var(--series-mem); }
 }
 .field.flash { animation: field-flash 1.8s ease; border-radius: 8px; }
 
+/* 折线图下方的引导条 */
+.frp-tap-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.frp-tap-hint .btn { flex: none; }
+.frp-tap-hint:empty { display: none; }
+
+/* 窄屏：竖排，按钮独占一行好点 */
+.is-narrow .frp-tap-hint { flex-direction: column; align-items: stretch; }
+.is-narrow .frp-tap-hint .btn { width: 100%; }
+
 /* 手机端（窄屏）不展示 frp 的安装入口，装 frp 是桌面上的活 */
 .is-narrow [data-card="frp-setup"],
 .is-narrow [data-card="frp-install-ctl"] { display: none; }

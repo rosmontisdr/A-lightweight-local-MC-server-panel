@@ -10,6 +10,8 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $url = "http://localhost:$Port"
 $logFile = Join-Path $root 'data\tray.log'
+# 面板关闭时写下这个文件；本脚本据此立即退出
+$script:stopFile = Join-Path $root 'data\panel.stopping'
 $script:failures = 0
 $script:alive = $true
 
@@ -145,12 +147,26 @@ $timer.add_Tick({
   })
 $timer.Start()
 
+# 面板关闭后马上退：只查本地哨兵文件
+$stopTimer = New-Object System.Windows.Forms.Timer
+$stopTimer.Interval = 400
+$stopTimer.add_Tick({
+    if (Test-Path $script:stopFile) {
+      Write-Log '面板已关闭，退出托盘图标'
+      $script:alive = $false
+      $ni.Visible = $false
+      [System.Windows.Forms.Application]::Exit()
+    }
+  })
+$stopTimer.Start()
+
 Write-Log "托盘已启动，端口 $Port，图标 $iconUsed"
 $ctx = New-Object System.Windows.Forms.ApplicationContext
 try {
   [System.Windows.Forms.Application]::Run($ctx)
 } finally {
   $timer.Stop()
+  $stopTimer.Stop()
   $ni.Visible = $false
   $ni.Dispose()
   Write-Log '托盘已退出'

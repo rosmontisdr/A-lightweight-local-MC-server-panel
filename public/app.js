@@ -865,6 +865,18 @@ function frpCardHTML(st, ov) {
   }
 }
 
+/**
+ * 折线图下方的引导。
+ * frps 只在连接断开时结算字节，隧道长时间连着时这张图不会动；没开本地转发计数就先说明原因。
+ */
+function frpTapHintHTML(st) {
+  const f = st.frp;
+  if (!f || !f.attached) return '';
+  if (f.tap && f.tap.enabled) return '';
+  return `<span>隧道长时间连着时这张图不会动（frps 只在连接断开时结算字节）。</span>
+    <button class="btn btn-sm" data-action="frp-tap-guide">开启本地转发计数</button>`;
+}
+
 /** 全部隧道卡片的副标题：条数 + 配置文件名 */
 function frpTunnelsSub(ov) {
   if (!ov || !ov.toml) return '读取中…';
@@ -968,6 +980,7 @@ function renderOverview(content, st) {
           <div class="card-sub">${frpSubText(st)}</div>
         </div>
         <div id="frpCardBody">${frpCardHTML(st, S.view.frpOv) || '<div id="chartFrp"></div>'}</div>
+        <div id="frpTapHint" class="frp-tap-hint">${frpTapHintHTML(st)}</div>
       </div>
       <div class="card">
         <div class="card-head">
@@ -1085,6 +1098,8 @@ function patchFrpCards(st, r) {
   if (el) el.innerHTML = frpTunnelsHTML(r);
   const sub = $('#frpTunnelsSub');
   if (sub) sub.textContent = frpTunnelsSub(r);
+  const hint = $('#frpTapHint');
+  if (hint) hint.innerHTML = frpTapHintHTML(st);
 }
 
 /** 下载进行中时轮询进度 */
@@ -1169,6 +1184,13 @@ function updateOverview(st) {
       S.view.frpCardState = state;
       $('#frpCardBody').innerHTML = frpCardHTML(st, S.view.frpOv);
     }
+  }
+
+  // 折线图下方的引导：开了转发口就撤掉
+  const hint = $('#frpTapHint');
+  if (hint) {
+    const html = frpTapHintHTML(st);
+    if (hint.innerHTML !== html) hint.innerHTML = html;
   }
 }
 
@@ -2399,6 +2421,7 @@ async function renderFrp(content, st) {
   const proc = ov.process || {};
   const sug = sr.suggestions || {};
   const p = sr.proxy || { ...sug };
+  const t = sr.tap || { enabled: false };
   const busy = S.busy.has('frp');
 
   content.innerHTML = `
@@ -2484,6 +2507,22 @@ async function renderFrp(content, st) {
             </select>
           </div>
         </div>
+        <div class="field" data-card="frp-tap" style="margin:12px 0 0">
+          <label>本地转发计数</label>
+          <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">
+            <button class="btn btn-sm ${t.enabled ? 'btn-danger' : 'btn-primary'}"
+              data-action="frp-tap-toggle" ${sr.attached ? '' : 'disabled'}>${t.enabled ? '关闭' : '开启'}</button>
+            ${t.enabled ? `<span class="mono" style="font-size:12px">
+              ${t.running
+                ? `监听 127.0.0.1:${t.listenPort} → 127.0.0.1:${t.targetPort} · 连接 ${t.conns}`
+                : `<span style="color:var(--critical)">转发口没起来</span>`}
+            </span>` : ''}
+          </div>
+          ${t.error ? `<div class="danger-box" style="margin-top:8px">${esc(t.error)}</div>` : ''}
+          <div class="muted" style="font-size:12px;margin-top:8px;line-height:1.7">
+            启用此选项后面板进程将会与此隧道绑定。变更此选项将会立马重启frpc
+          </div>
+        </div>
         <div class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
           隧道状态：${frpTunnelLine(sr)}
         </div>
@@ -2524,6 +2563,51 @@ async function renderFrp(content, st) {
 async function frpRefresh() {
   invalidateFrp();
   renderTab();
+}
+
+/** 从概览页的折线图跳到 FRP 页，并闪一下「本地转发计数」这一项 */
+function frpTapGuide() {
+  S.tab = 'frp';
+  S.view = {};
+  renderTabs();
+  renderTab();
+  let tries = 0;
+  const aim = () => {
+    const el = document.querySelector('[data-card="frp-tap"]');
+    if (!el) {
+      if (++tries < 20) setTimeout(aim, 150);
+      return;
+    }
+    el.scrollIntoView({ block: 'center' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1800);
+  };
+  setTimeout(aim, 200);
+}
+
+/**
+ * 本地转发计数开关。按一下就做完整个流程：
+ * 起停监听口、把隧道 localPort 改到它（或改回服务器端口）、重启 frpc。
+ */
+async function frpTapToggle() {
+  const id = S.current;
+  const sr = S.view.frpSrv || {};
+  const on = sr.tap && sr.tap.enabled;
+  const btn = document.querySelector('[data-action="frp-tap-toggle"]');
+  if (btn) btn.disabled = true;
+  toast(on ? '正在关闭并重启 frpc，请稍候…' : '正在开启并重启 frpc，请稍候…', 'info', 60000);
+  try {
+    const r = await api(`/api/servers/${id}/frp/tap`, { method: on ? 'DELETE' : 'POST' });
+    const skipped = !!(r.restart && r.restart.via === 'skipped');
+    const tail = skipped ? '。frpc 没能自动重启，请自己重启它' : '，frpc 已重启';
+    toast(on
+      ? (r.restored ? '已关闭：隧道已指回服务器端口' + tail : '本地转发计数已关闭' + tail)
+      : `已开启：监听 127.0.0.1:${r.listenPort}，隧道已指向它` + tail,
+    skipped ? 'warn' : 'ok', skipped ? 10000 : 6000);
+  } catch (e) {
+    toast(e.message, 'err', 10000);
+  }
+  await frpRefresh();
 }
 
 async function frpPickDir() {
@@ -3352,6 +3436,8 @@ document.addEventListener('click', async (e) => {
       case 'frp-stop': return frpProc('stop', 'frpc 已停止');
       case 'frp-reload': return frpProc('reload', '已请求重载');
       case 'frp-save-proxy': return frpSaveProxy();
+      case 'frp-tap-toggle': return frpTapToggle();
+      case 'frp-tap-guide': return frpTapGuide();
       case 'frp-del-proxy': return frpDelProxy();
       case 'frp-open-settings': return openFrpSettings();
       case 'frp-enable-admin': return frpEnableAdmin();
