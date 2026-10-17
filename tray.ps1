@@ -8,12 +8,20 @@
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$url = "http://localhost:$Port"
 $logFile = Join-Path $root 'data\tray.log'
 # 面板关闭时写下这个文件；本脚本据此立即退出
 $script:stopFile = Join-Path $root 'data\panel.stopping'
 $script:failures = 0
 $script:alive = $true
+# 当前端口。初始取 data/panel.port（面板换端口后重写），读不到用启动参数
+$script:curPort = $Port
+try {
+  $portFile = Join-Path $root 'data\panel.port'
+  if (Test-Path $portFile) {
+    $p = 0
+    if ([int]::TryParse((Get-Content $portFile -Raw).Trim(), [ref]$p) -and $p -ge 1024 -and $p -le 65535) { $script:curPort = $p }
+  }
+} catch { }
 
 function Write-Log([string]$msg) {
   try {
@@ -30,19 +38,19 @@ function Open-Panel {
   # （浏览器没法把已有的标签页切到前台，只能关掉重开）
   $page = $false
   try {
-    $r = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/panel/show" -TimeoutSec 3
+    $r = Invoke-RestMethod -Uri "http://127.0.0.1:$script:curPort/api/panel/show" -Headers @{ 'X-McPanel' = '1' } -TimeoutSec 3
     $page = [bool]$r.page
   } catch { }
   if ($page) {
     Write-Log '已让原来的面板标签页关闭，正在打开新的'
     Start-Sleep -Milliseconds 150
   }
-  try { Start-Process $url } catch { Write-Log "打开浏览器失败：$($_.Exception.Message)" }
+  try { Start-Process "http://localhost:$script:curPort" } catch { Write-Log "打开浏览器失败：$($_.Exception.Message)" }
 }
 
 function Invoke-PanelApi([string]$path) {
   try {
-    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port$path" -TimeoutSec 5 | Out-Null
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$script:curPort$path" -Headers @{ 'X-McPanel' = '1' } -TimeoutSec 5 | Out-Null
     return $true
   } catch {
     Write-Log "调用 $path 失败：$($_.Exception.Message)"
@@ -126,15 +134,27 @@ $ni.add_MouseClick({
     }
   })
 
-# 每 3 秒探一次面板；连续 5 次探不到（约 15 秒）就退出图标
+# 每 3 秒探一次面板；连续 5 次探不到（约 15 秒）就退出图标。
+# 端口从 data/panel.port 动态读：面板换端口后托盘跟得上，不再按旧端口探活自杀。
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 3000
 $timer.add_Tick({
     try {
-      $st = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/state" -TimeoutSec 2
+      $portFile = Join-Path $root 'data\panel.port'
+      if (Test-Path $portFile) {
+        $p = 0
+        if ([int]::TryParse((Get-Content $portFile -Raw).Trim(), [ref]$p) -and $p -ge 1024 -and $p -le 65535) {
+          if ($p -ne $script:curPort) {
+            Write-Log "面板端口变为 $p，托盘跟随"
+            $script:curPort = $p
+            $ni.Text = "RS面板 · 端口 $p"
+          }
+        }
+      }
+      $st = Invoke-RestMethod -Uri "http://127.0.0.1:$script:curPort/api/panel" -TimeoutSec 2
       $script:failures = 0
-      $n = @($st.servers).Count
-      $ni.Text = "RS面板 · 端口 $Port · 已纳管 $n 台"
+      $n = [int]$st.serverCount
+      $ni.Text = "RS面板 · 端口 $script:curPort · 已纳管 $n 台"
     } catch {
       $script:failures++
       if ($script:failures -ge 5) {

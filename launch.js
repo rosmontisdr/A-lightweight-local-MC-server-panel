@@ -35,11 +35,13 @@ function portBusy(port) {
 /**
  * 托盘图标是否已经在跑。
  * 必须排除本进程：查进程用的 powershell 自己命令行里也含 tray.ps1，不排会永远算作「已在跑」。
+ * 只认本项目目录的 tray.ps1 路径，命令行里恰好含 tray.ps1 字样的别的进程不算。
  */
 function trayRunning() {
   try {
+    const self = path.join(__dirname, 'tray.ps1');
     const out = execFileSync('powershell', ['-NoProfile', '-Command',
-      `@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*tray.ps1*' -and $_.ProcessId -ne $PID }).Count`],
+      `@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*${self}*' -and $_.ProcessId -ne $PID }).Count`],
       { encoding: 'utf8', windowsHide: true, timeout: 10000 });
     return Number(String(out).trim()) > 0;
   } catch {
@@ -59,12 +61,24 @@ function startTray() {
       '//B', '//Nologo', path.join(__dirname, 'tray.vbs'), String(PORT),
     ], { cwd: __dirname, detached: true, stdio: 'ignore', windowsHide: true });
     child.unref();
-  } catch { }
+  } catch { /* 失败可忽略 */ }
 }
 
 function tail(file, n) {
   try {
-    return fs.readFileSync(file, 'utf8').trimEnd().split(/\r?\n/).slice(-n).join('\n');
+    // 只读末尾 64KB，大日志不整份驻留
+    const st = fs.statSync(file);
+    const len = Math.min(st.size, 64 * 1024);
+    const fd = fs.openSync(file, 'r');
+    let text;
+    try {
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, st.size - len);
+      text = buf.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+    return text.trimEnd().split(/\r?\n/).slice(-n).join('\n');
   } catch {
     return `（读不到日志 ${file}）`;
   }

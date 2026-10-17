@@ -17,6 +17,7 @@ const archive = require('./lib/archive');
 const backup = require('./lib/backup');
 const players = require('./lib/players');
 const propsLib = require('./lib/props');
+const custom = require('./lib/custom');
 const launcher = require('./lib/launcher');
 const { Frp } = require('./lib/frp');
 const frpinstall = require('./lib/frpinstall');
@@ -42,19 +43,21 @@ function tellPages(payload) {
 // 重启不写，托盘陪着面板换代。
 const STOP_FILE = path.join(DATA_DIR, 'panel.stopping');
 let stopping = false;
-try { fs.rmSync(STOP_FILE, { force: true }); } catch {}
+try { fs.rmSync(STOP_FILE, { force: true }); } catch { /* 失败可忽略 */ }
 
 process.on('exit', () => {
   if (!stopping) return;
-  try { fs.writeFileSync(STOP_FILE, String(Date.now())); } catch {}
+  try { fs.writeFileSync(STOP_FILE, String(Date.now())); } catch { /* 失败可忽略 */ }
 });
 
-/** 本地转发口随面板一起停，指向它们的隧道随之断开 */
-function warnTaps() {
+/** 本地转发口随面板一起停。willRestore 为真时退出前会把隧道指回服务器端口 */
+function warnTaps(willRestore = false) {
   let taps = [];
-  try { taps = frp.runningTaps(); } catch { }
+  try { taps = frp.runningTaps(); } catch { /* 失败可忽略 */ }
   if (!taps.length) return;
-  console.log('[面板] 以下本地转发口会随面板关闭而停止，指向它们的隧道将断开：');
+  console.log(willRestore
+    ? '[面板] 以下本地转发口会随面板停止，退出前会把隧道指回服务器端口：'
+    : '[面板] 以下本地转发口会随面板关闭而停止，指向它们的隧道将断开：');
   for (const t of taps) {
     console.log(`       · ${t.name}  127.0.0.1:${t.listenPort} → 127.0.0.1:${t.targetPort}`);
   }
@@ -87,7 +90,7 @@ const MIME = {
 };
 
 function sendJson(res, code, obj) {
-  const body = JSON.stringify(obj, null, 2);
+  const body = JSON.stringify(obj);
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
@@ -98,12 +101,14 @@ function sendJson(res, code, obj) {
 
 function sendError(res, e) {
   const msg = e && e.message ? e.message : String(e);
-  const code = /不存在|未找到/.test(msg) ? 404 : /非法|越界|拒绝/.test(msg) ? 403 : 400;
+  // 业务错误可自带 status，不再按消息正则猜
+  const code = e && Number.isInteger(e.status) ? e.status
+    : /不存在|未找到/.test(msg) ? 404 : /非法|越界|拒绝/.test(msg) ? 403 : 400;
   // conflict 供前端分流：同名文件已存在时前端弹「覆盖？」。
   sendJson(res, code, { error: msg, conflict: !!(e && e.conflict) });
 }
 
-function readBody(req, limit = 600 * 1024 * 1024) {
+function readBody(req, limit = 32 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -122,6 +127,84 @@ async function readJson(req) {
   if (!buf.length) return {};
   try { return JSON.parse(buf.toString('utf8')); }
   catch { throw new Error('请求体不是合法 JSON'); }
+}
+
+/** 请求体流式落盘到 dest，返回写入字节数。超限即中止并删临时文件。 */
+function streamBody(req, dest, limit = 2 * 1024 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const { createWriteStream, rmSync } = require('fs');
+    const out = createWriteStream(dest);
+    let size = 0;
+    const fail = (e) => {
+      req.unpipe(out);
+      out.destroy();
+      try { rmSync(dest, { force: true }); } catch { /* 失败可忽略 */ }
+      reject(e);
+    };
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) fail(new Error('文件过大'));
+    });
+    req.pipe(out);
+    out.on('finish', () => resolve(size));
+    out.on('error', fail);
+    req.on('error', fail);
+    req.on('aborted', () => fail(new Error('上传已中断')));
+  });
+}
+
+// 静态资源内存缓存：mtime 变更即重读；文本类同时存 gzip 副本
+const staticCache = new Map(); // rel -> { mtimeMs, size, raw, gz, etag, type }
+const STATIC_TEXT = new Set(['.html', '.js', '.css', '.json', '.svg']);
+
+function loadStatic(rel) {
+  const abs = safeResolve(PUBLIC_DIR, rel);
+  let st;
+  try {
+    st = fs.statSync(abs);
+    if (!st.isFile()) return null;
+  } catch {
+    return null;
+  }
+  const hit = staticCache.get(rel);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
+  const raw = fs.readFileSync(abs);
+  const type = MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream';
+  const etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+  const rec = {
+    mtimeMs: st.mtimeMs,
+    size: st.size,
+    raw,
+    gz: STATIC_TEXT.has(path.extname(abs).toLowerCase()) ? zlib.gzipSync(raw) : null,
+    etag,
+    type,
+  };
+  staticCache.set(rel, rec);
+  return rec;
+}
+
+function serveStatic(req, res, rel) {
+  const rec = loadStatic(rel);
+  if (!rec) return notFound(res);
+  const headers = {
+    'Content-Type': rec.type,
+    'Cache-Control': 'no-cache',
+    ETag: rec.etag,
+  };
+  if (req.headers['if-none-match'] === rec.etag) {
+    res.writeHead(304, headers);
+    return res.end();
+  }
+  const gzipOk = rec.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+  if (gzipOk) {
+    headers['Content-Encoding'] = 'gzip';
+    headers['Content-Length'] = rec.gz.length;
+    res.writeHead(200, headers);
+    return res.end(rec.gz);
+  }
+  headers['Content-Length'] = rec.raw.length;
+  res.writeHead(200, headers);
+  return res.end(rec.raw);
 }
 
 /** 后台执行耗时操作，结果经 SSE 通知前端 */
@@ -146,25 +229,30 @@ function requireServer(id) {
 
 // ───────────────────────── 路由 ─────────────────────────
 
+/** 路由分发：按资源前缀转给各路由组，主体只做解析与分发 */
 async function route(req, res, url) {
   const p = url.pathname;
-  const q = url.searchParams;
   const m = req.method;
 
   // ---- 静态文件 ----
   if (m === 'GET' && !p.startsWith('/api/')) {
-    const rel = p === '/' ? 'index.html' : p.replace(/^\//, '');
-    let abs;
-    try { abs = safeResolve(PUBLIC_DIR, rel); } catch { return notFound(res); }
-    if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return notFound(res);
-    const body = fs.readFileSync(abs);
-    res.writeHead(200, {
-      'Content-Type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream',
-      'Content-Length': body.length,
-      'Cache-Control': 'no-cache',
-    });
-    return res.end(body);
+    return serveStatic(req, res, p === '/' ? 'index.html' : p.replace(/^\//, ''));
   }
+
+  if (p === '/api/state' || p === '/api/discover' || p === '/api/servers') return routesGlobal(req, res, url, m);
+  if (p === '/api/panel' || p.startsWith('/api/panel/') || p === '/api/browse' || p.startsWith('/api/jobs/')) {
+    return routesPanel(req, res, url, m);
+  }
+  if (p.startsWith('/api/frp')) return routesFrp(req, res, url, m);
+  if (p.startsWith('/api/servers/')) return routesServers(req, res, url, m);
+  return notFound(res);
+}
+
+// ───────────────────────── 路由组：全局 ─────────────────────────
+
+async function routesGlobal(req, res, url, m) {
+  const p = url.pathname;
+  const q = url.searchParams;
 
   // ---- 全局 ----
   if (p === '/api/state' && m === 'GET') {
@@ -195,17 +283,24 @@ async function route(req, res, url) {
       path.join(home, 'AppData', 'Roaming', '.minecraft'),
     ].filter((r) => { try { return fs.statSync(r).isDirectory(); } catch { return false; } });
 
+    // 只扫一层，并发受控，不阻塞事件循环
+    const fsp = fs.promises;
     const found = new Set();
-    for (const root of roots) {
-      // 只扫一层。
-      let entries = [];
-      try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
-      for (const e of entries) {
-        if (!e.isDirectory()) continue;
-        const dir = path.join(root, e.name);
-        if (Store.looksLikeServer(dir)) found.add(dir);
+    const LIMIT = 16;
+    let idx = 0;
+    const workers = Array.from({ length: LIMIT }, async () => {
+      while (idx < roots.length) {
+        const root = roots[idx++];
+        let entries = [];
+        try { entries = await fsp.readdir(root, { withFileTypes: true }); } catch { continue; }
+        for (const e of entries) {
+          if (!e.isDirectory()) continue;
+          const dir = path.join(root, e.name);
+          if (Store.looksLikeServer(dir)) found.add(dir);
+        }
       }
-    }
+    });
+    await Promise.all(workers);
     const known = new Set(manager.list().map((s) => path.resolve(s.dir).toLowerCase()));
     return sendJson(res, 200, {
       candidates: [...found]
@@ -213,11 +308,20 @@ async function route(req, res, url) {
         .map((d) => {
           const det = launcher.detect(d);
           let mods = 0;
-          try { mods = fs.readdirSync(path.join(d, 'mods')).filter((f) => /\.jar$/.test(f)).length; } catch {}
+          try { mods = fs.readdirSync(path.join(d, 'mods')).filter((f) => /\.jar$/.test(f)).length; } catch { /* 失败可忽略 */ }
           return { dir: d, name: path.basename(d), type: det.type, mods, hint: det.hint };
         }),
     });
   }
+
+  return notFound(res);
+}
+
+// ───────────────────────── 路由组：面板自身 ─────────────────────────
+
+async function routesPanel(req, res, url, m) {
+  const p = url.pathname;
+  const q = url.searchParams;
 
   // ---- 面板自身的设置 / 重启 / 关闭 ----
 
@@ -233,7 +337,7 @@ async function route(req, res, url) {
       settled = true;
       clearTimeout(timer);
       pageWaiters.delete(done);
-      try { sendJson(res, 200, payload); } catch {}
+      try { sendJson(res, 200, payload); } catch { /* 失败可忽略 */ }
     };
     const timer = setTimeout(() => done({ ok: true, close: false }), PAGE_HOLD_MS);
     pageWaiters.add(done);
@@ -294,9 +398,19 @@ async function route(req, res, url) {
     sendJson(res, 200, { ok: true });
     // 让在看面板的标签页自己关掉，托盘图标随哨兵文件一起退出
     tellPages({ ok: true, close: true });
-    warnTaps();
+    warnTaps(true);
     // 面板退出不会关闭 Minecraft 服务器进程，与点窗口 X 一致
     stopping = true;
+    // 转发口随面板一起停：把被它改走的 localPort 改回服务器端口并重启 frpc。只有「关闭面板」走这里，重启不走。
+    // 恢复流程限时 10 秒，卡住也要退出，不让哨兵落不了盘
+    await Promise.race([
+      frp.restoreTapsOnExit()
+        .then((r) => {
+          if (r.restored.length) console.log('[面板] 已把隧道指回服务器端口：' + r.restored.join('，'));
+        })
+        .catch((e) => console.error('[面板] 关闭时恢复隧道失败：' + e.message)),
+      new Promise((r) => setTimeout(r, 10000)),
+    ]);
     setTimeout(() => process.exit(0), 300);
     return;
   }
@@ -309,11 +423,13 @@ async function route(req, res, url) {
     if (String(body.confirm || '').trim() !== '格式化') {
       throw new Error('确认文本不正确，需要输入「格式化」');
     }
+    // 备份还在写时删目录会互踩，先拒绝
+    if (backup.hasRunningJob()) throw new Error('还有备份/还原任务在进行，请等它完成后再格式化');
     store.reset();
-    try { fs.rmSync(backup.BACKUP_ROOT, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(backup.BACKUP_ROOT, { recursive: true, force: true }); } catch { /* 失败可忽略 */ }
     // panel.log 无法删除，截断为空文件。
-    try { fs.writeFileSync(panellog.LOG_FILE, ''); } catch {}
-    try { fs.rmSync(panellog.LOG_FILE + '.1', { force: true }); } catch {}
+    try { fs.writeFileSync(panellog.LOG_FILE, ''); } catch { /* 失败可忽略 */ }
+    try { fs.rmSync(panellog.LOG_FILE + '.1', { force: true }); } catch { /* 失败可忽略 */ }
 
     sendJson(res, 200, { ok: true });
     // 重启：设置已清空，新进程须按默认值启动。
@@ -334,11 +450,9 @@ async function route(req, res, url) {
     const sep = path.sep;
     let entries = [];
     try {
+      // Dirent 已给出类型，不再逐条 statSync
       entries = fs.readdirSync(dir, { withFileTypes: true })
-        .filter((e) => {
-          try { return e.isDirectory() && fs.statSync(path.join(dir, e.name)).isDirectory(); }
-          catch { return false; }
-        })
+        .filter((e) => e.isDirectory())
         .map((e) => ({ name: e.name, path: path.join(dir, e.name), isServer: Store.looksLikeServer(path.join(dir, e.name)) }))
         .sort((a, b) => Number(b.isServer) - Number(a.isServer) || a.name.localeCompare(b.name, 'zh'));
     } catch (e) {
@@ -356,12 +470,20 @@ async function route(req, res, url) {
     });
   }
 
-  // 任务（备份 / 还原）进度
+  // 任务（备份 / 还原）进度。任务不在内存里（面板重启过）按丢失回报，不让前端转圈
   if (p.startsWith('/api/jobs/') && m === 'GET') {
     const job = backup.getJob(p.slice('/api/jobs/'.length));
-    if (!job) throw new Error('任务不存在');
+    if (!job) return sendJson(res, 200, { id: p.slice('/api/jobs/'.length), status: 'lost', error: '任务已不存在（面板可能重启过）' });
     return sendJson(res, 200, job);
   }
+
+  return notFound(res);
+}
+
+// ───────────────────────── 路由组：FRP ─────────────────────────
+
+async function routesFrp(req, res, url, m) {
+  const p = url.pathname;
 
   // ---- FRP ----
   if (p === '/api/frp' && m === 'GET') {
@@ -439,7 +561,14 @@ async function route(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
-  // ---- 单台服务器 ----
+  return notFound(res);
+}
+
+// ───────────────────────── 路由组：单台服务器 ─────────────────────────
+
+async function routesServers(req, res, url, m) {
+  const p = url.pathname;
+  const q = url.searchParams;
   const sm = p.match(/^\/api\/servers\/([^/]+)(\/.*)?$/);
   if (!sm) return notFound(res);
   const server = requireServer(decodeURIComponent(sm[1]));
@@ -483,14 +612,20 @@ async function route(req, res, url) {
   }
 
   if (sub === '' && m === 'GET') {
-    const status = await server.refresh(true);
+    // 先回缓存状态并后台刷新，请求路径不再强制全量探测
+    server.refresh(true).catch(() => {});
     return sendJson(res, 200, {
-      status,
-      launch: server.detectLaunch(true),
+      status: server.status,
+      launch: server.detectLaunch(),
       savedLaunch: server.entry.launch || null,
       stats: server.stats(),
       connections: server.connectionInfo(),
-      rcon: { available: server.rconAvailable, enabled: String(server.prop('enable-rcon', 'false')) === 'true' },
+      rcon: {
+        available: server.rconAvailable,
+        enabled: String(server.prop('enable-rcon', 'false')) === 'true',
+        blocked: server.rconBlocked,
+        port: server.rconConfig ? server.rconConfig.port : null,
+      },
     });
   }
 
@@ -566,14 +701,21 @@ async function route(req, res, url) {
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
-    const send = (obj) => {
-      try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {}
+    // 序列化在 broadcast 侧做一次，每个客户端复用同一字符串
+    const send = (obj, frame) => {
+      try {
+        res.write(frame || `data: ${JSON.stringify(obj)}\n\n`);
+        // 背压：停滞客户端堆积超限即断开
+        if (res.writableLength > 2 * 1024 * 1024) {
+          try { res.destroy(); } catch { /* 失败可忽略 */ }
+        }
+      } catch { /* 失败可忽略 */ }
     };
     send({ type: 'status', data: server.status });
     send({ type: 'logs', data: server.logs.slice(-SSE_LOG_BACKLOG), last: server.logSeq });
     const unsub = server.subscribe(send);
-    const ka = setInterval(() => { try { res.write(': keepalive\n\n'); } catch {} }, 15000);
-    const close = () => { clearInterval(ka); unsub(); try { res.end(); } catch {} };
+    const ka = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { /* 失败可忽略 */ } }, 15000);
+    const close = () => { clearInterval(ka); unsub(); try { res.end(); } catch { /* 失败可忽略 */ } };
     req.on('close', close);
     req.on('error', close);
     return;
@@ -590,7 +732,7 @@ async function route(req, res, url) {
           const st = fs.statSync(path.join(abs, e.name));
           out.push({ rel: d + '/' + e.name, dir: d, name: e.name, size: st.size, mtime: st.mtime.toISOString() });
         }
-      } catch {}
+      } catch { /* 失败可忽略 */ }
     }
     // 按文件名排序：崩溃报告整体在前，组内倒序（最新在前）。
     // numeric 倒序使日志读作 latest.log → …-4 → …-3 → …-2 → …-1。
@@ -602,29 +744,43 @@ async function route(req, res, url) {
 
   if (sub === '/logfile' && m === 'GET') {
     const rel = q.get('file');
-    const abs = safeResolve(server.dir, rel);
-    if (!/^(logs|crash-reports)[\\/]/.test(rel.replace(/\\/g, '/'))) {
+    if (!rel) throw new Error('缺少 file 参数');
+    // 拆段校验首段：logs/../ 之类以 logs/ 开头但会逃出目录
+    const norm = path.normalize(rel).replace(/\\/g, '/');
+    const first = norm.split('/')[0];
+    if (first !== 'logs' && first !== 'crash-reports') {
       throw new Error('只能读取 logs/ 与 crash-reports/ 下的文件');
     }
-    const buf = fs.readFileSync(abs);
-    let text;
-    let truncated = false;
-    if (rel.toLowerCase().endsWith('.gz')) {
-      text = zlib.gunzipSync(buf).toString('utf8');
-    } else {
-      text = buf.toString('utf8');
-    }
+    const abs = safeResolve(server.dir, norm);
+    const st = fs.statSync(abs);
     const maxBytes = 2 * 1024 * 1024;
-    if (Buffer.byteLength(text, 'utf8') > maxBytes) {
-      text = text.slice(-maxBytes);
-      truncated = true;
+    let text;
+    let truncated = st.size > maxBytes;
+    if (rel.toLowerCase().endsWith('.gz')) {
+      const buf = fs.readFileSync(abs);
+      text = zlib.gunzipSync(buf).toString('utf8');
+      if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+        text = text.slice(-maxBytes);
+        truncated = true;
+      }
+    } else {
+      // 超限时只从尾部读，避免整份驻留
+      const len = Math.min(st.size, maxBytes);
+      const fd = fs.openSync(abs, 'r');
+      try {
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, st.size - len);
+        text = buf.toString('utf8');
+      } finally {
+        fs.closeSync(fd);
+      }
     }
-    return sendJson(res, 200, { file: rel, content: text, truncated, size: buf.length });
+    return sendJson(res, 200, { file: rel, content: text, truncated, size: st.size });
   }
 
   // ---- 文件管理 ----
   if (sub === '/files' && m === 'GET') {
-    return sendJson(res, 200, files.list(server.dir, q.get('path') || ''));
+    return sendJson(res, 200, await files.list(server.dir, q.get('path') || ''));
   }
 
   if (sub === '/file' && m === 'GET') {
@@ -653,8 +809,8 @@ async function route(req, res, url) {
   if (sub === '/file/upload' && m === 'POST') {
     const dir = q.get('path') || '';
     const name = q.get('name');
-    const buf = await readBody(req);
-    const r = files.upload(server.dir, dir, name, buf);
+    // 流式落盘，上传体不驻留内存
+    const r = await files.uploadStream(server.dir, dir, name, req);
     server.broadcast({ type: 'notice', level: 'ok', message: `已上传 ${r.path}` });
     return sendJson(res, 200, r);
   }
@@ -722,20 +878,83 @@ async function route(req, res, url) {
         throw new Error(`「${k}」未修改，请勿提交掩码值`);
       }
     }
+    // 基线取最新解析结果，避免拿旧文本整体覆盖
+    server.getProps(true);
     const text = propsLib.setMany(server._propsText || '', changes);
     fs.copyFileSync(path.join(server.dir, 'server.properties'), path.join(server.dir, 'server.properties.bak'));
     fs.writeFileSync(path.join(server.dir, 'server.properties'), text, 'utf8');
-    server.getProps(true);
+    const parsed = server.getProps(true);
     const restartKeys = ['server-port', 'server-ip', 'enable-rcon', 'rcon.port', 'rcon.password',
       'enable-query', 'query.port', 'level-name', 'online-mode'];
     const needRestart = Object.keys(changes).some((k) => restartKeys.includes(k));
+    // 回带最新 items，前端不必再串行拉一次
+    const items = Object.entries(parsed.map).map(([key, v]) => ({
+      key,
+      value: propsLib.isSecretKey(key) ? propsLib.SECRET_MASK : v.value,
+      type: propsLib.inferType(key, v.value),
+      description: propsLib.describe(key),
+      secret: propsLib.isSecretKey(key),
+    }));
     return sendJson(res, 200, {
       ok: true,
       needRestart,
+      items,
       message: needRestart
         ? '已保存。其中有需要重启服务器才能生效的项，请重启后再观察效果。'
         : '已保存。部分设置会在下一次世界加载时生效。',
     });
+  }
+
+  // ---- 自定义：图标 / 标题副标题 / 入服私聊 ----
+  if (sub === '/custom' && m === 'GET') {
+    return sendJson(res, 200, custom.view(server));
+  }
+
+  if (sub === '/custom' && m === 'PUT') {
+    const body = await readJson(req);
+    let needRestart = false;
+    if (body.motd) {
+      custom.saveMotd(server, body.motd);
+      // 标题与图标都由服务端在启动时读入
+      needRestart = true;
+    }
+    if ('joinMsg' in body) {
+      const jm = custom.checkJoinMsg(custom.normalizeJoinMsg(body.joinMsg));
+      manager.update(server.id, { custom: { ...(server.entry.custom || {}), joinMsg: jm } });
+    }
+    return sendJson(res, 200, {
+      ok: true,
+      needRestart,
+      message: needRestart
+        ? '已保存。标题要重启服务器后才在客户端生效。'
+        : '已保存，玩家下次入服即会收到私聊。',
+      ...custom.view(server),
+    });
+  }
+
+  if (sub === '/icon' && m === 'GET') {
+    const icon = custom.readIcon(server);
+    if (!icon) return notFound(res);
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': icon.buf.length,
+      'Cache-Control': 'no-cache',
+      ETag: `"${icon.buf.length.toString(16)}-${Date.parse(icon.mtime).toString(16)}"`,
+      'Last-Modified': new Date(icon.mtime).toUTCString(),
+    });
+    return res.end(icon.buf);
+  }
+
+  if (sub === '/icon' && m === 'POST') {
+    const icon = await custom.receiveIcon(server, req);
+    server.broadcast({ type: 'notice', level: 'ok', message: '已更新服务器图标，重启服务器后生效' });
+    return sendJson(res, 200, { ok: true, icon });
+  }
+
+  if (sub === '/icon' && m === 'DELETE') {
+    custom.removeIcon(server);
+    server.broadcast({ type: 'notice', level: 'ok', message: '已移除服务器图标，重启服务器后生效' });
+    return sendJson(res, 200, { ok: true });
   }
 
   // ---- 玩家名单 ----
@@ -821,16 +1040,21 @@ function notFound(res) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`);
-  // 只允许本机来源。面板无密码，这是唯一的 CSRF 防线。该检查默认开启，仅在「高级设置」显式打开
-  // allowCrossSite 时放行，不得绕过。
+  // CSRF 防线：变更类请求必须带自定义头（跨站表单/图片无法设置，强制预检）。
+  // Origin 检查默认开启、只认面板当前端口；allowCrossSite 只放行 Origin，自定义头仍要求。
+  const mutating = req.method !== 'GET' && req.method !== 'HEAD'
+    || url.pathname === '/api/panel/show';   // 该 GET 会关闭标签页，按变更类对待
+  if (mutating && req.headers['x-mcpanel'] !== '1') {
+    return sendJson(res, 403, { error: '缺少请求头 X-McPanel，已拒绝' });
+  }
   const origin = req.headers.origin;
   if (!store.getSetting('allowCrossSite', false)
-      && origin && !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) {
+      && origin && !new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${PORT}$`).test(origin)) {
     return sendJson(res, 403, { error: '拒绝跨站请求' });
   }
   route(req, res, url).catch((e) => {
     if (!res.headersSent) sendError(res, e);
-    else try { res.end(); } catch {}
+    else try { res.end(); } catch { /* 失败可忽略 */ }
   });
 });
 
@@ -843,12 +1067,19 @@ function relaunch() {
   const { spawn } = require('child_process');
   const env = { ...process.env, MCPANEL_RESTARTED: '1' };
   delete env.MCPANEL_OPEN;
-  const child = spawn(process.execPath, [__filename], {
-    cwd: __dirname,
-    detached: true,
-    stdio: 'ignore',
-    env,
-  });
+  let child;
+  try {
+    child = spawn(process.execPath, [__filename], {
+      cwd: __dirname,
+      detached: true,
+      stdio: 'ignore',
+      env,
+    });
+  } catch (e) {
+    console.error('[面板] 接替进程启动失败：' + (e && e.message ? e.message : e));
+    return;
+  }
+  child.on('error', (e) => console.error('[面板] 接替进程启动失败：' + (e && e.message ? e.message : e)));
   child.unref();
 }
 
@@ -863,6 +1094,7 @@ function panelInfo() {
     version: require('./package.json').version,
     pid: process.pid,
     logFile: panellog.LOG_FILE,
+    serverCount: manager.list().length,
     // 供界面回填输入框，避免为了这些设置去调 /api/frp（那会做一次进程枚举）
     frp: frp.settingsSummary(),
   };
@@ -913,6 +1145,8 @@ async function onPortBusy() {
 }
 
 function onListening() {
+  // 落当前监听端口：托盘据此跟随换端口
+  try { fs.writeFileSync(path.join(DATA_DIR, 'panel.port'), String(PORT)); } catch { /* 失败可忽略 */ }
   const line = '─'.repeat(58);
   console.log(`\n${line}`);
   console.log('  RS面板 已启动');
@@ -928,8 +1162,11 @@ function onListening() {
   console.log('  关掉面板：界面左下角「关闭面板」，或直接结束本进程。');
   console.log('  注意：面板退出不会关闭已启动的 Minecraft 服务器。\n');
 
-  // 清掉上次中断留下的下载暂存目录
+  // 清掉上次中断留下的下载暂存目录与压缩残留
   frpinstall.cleanupStale();
+  for (const s of manager.list()) {
+    try { archive.cleanupStale(s.dir); } catch { /* 失败可忽略 */ }
+  }
   frp.startSampler();
 
   // 仅由 launch.js 设置。重启不经此处，浏览器那一侧会自己切过去。
@@ -949,6 +1186,14 @@ function onListening() {
 
 // 重启重试时同样触发该回调，抽出复用。
 server.listen(PORT, HOST, onListening);
+
+// 进程级兜底：未捕获异常只记日志，不让面板进程直接消失
+process.on('uncaughtException', (e) => {
+  console.error('[面板] 未捕获异常：' + (e && e.stack || e));
+});
+process.on('unhandledRejection', (e) => {
+  console.error('[面板] 未处理的 Promise 拒绝：' + (e && e.stack || e));
+});
 
 process.on('SIGINT', () => {
   const owned = manager.ownedPids();
